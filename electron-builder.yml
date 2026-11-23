@@ -1,0 +1,17 @@
+appId: com.mgit.desktop
+productName: mGit
+directories:
+  output: release
+files:
+  - dist/core/**
+  - dist/main.js
+  - dist/preload.js
+  - dist/cli.js
+  - dist/ui/**
+win:
+  target: nsis
+  signAndEditExecutable: false
+nsis:
+  artifactName: mGit-Setup-${version}.${ext}
+  allowToChangeInstallationDirectory: true
+  oneClick: false

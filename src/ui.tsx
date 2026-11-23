@@ -1,0 +1,244 @@
+import React, { FormEvent, useEffect, useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import type { AssetSummary, Bridge, Change, Entry, Environment, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests } from './core/public';
+import './ui.css';
+
+declare global { interface Window { mgit: Bridge } }
+const pages = ['Стенды', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
+type Page = typeof pages[number];
+const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
+const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
+const icons = ['M3 5h18v5H3z M3 14h18v5H3z M7 7.5h1 M7 16.5h1', 'M5 3h13v17H5z M5 16h13 M8 7h7 M8 10h5', 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6', 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6', 'M3 12a9 9 0 1 0 3-7 M3 4v5h5 M12 7v5l3 2', 'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2'];
+function Icon({ index }: { index: number }) {
+  return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
+}
+
+const emptyProfile: ProfileInput = { name: '', url: '', environment: 'DEV', auth: 'db', username: '' };
+const emptyGit: GitState = { branch: '', status: '', head: '', branches: [] };
+function Counts({ values }: { values: Record<string, number> }) {
+  return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
+}
+function Changes({ changes }: { changes: Change[] }) {
+  const [index, setIndex] = useState(0);
+  const change = changes[index] ?? changes[0];
+  if (!change) return <p className="notice">Снимок совпадает с HEAD.</p>;
+  return <div className="diff">
+    <div className="diff-files">{changes.map((entry, i) => <button className={entry === change ? 'active' : ''} key={entry.path} onClick={() => setIndex(i)}>
+      <span className={'tag ' + entry.action}>{actionNames[entry.action]}</span><span>{entry.path}</span></button>)}</div>
+    <div className="diff-bodies"><details open><summary>До · {change.path}</summary><pre>{change.before ?? '—'}</pre></details>
+      <details open><summary>После · {change.path}</summary><pre>{change.after ?? '—'}</pre></details></div>
+  </div>;
+}
+
+function App() {
+  const [page, setPage] = useState<Page>('Стенды');
+  const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
+  const [profileId, setProfileId] = useState('');
+  const [editor, setEditor] = useState<ProfileInput>({ ...emptyProfile });
+  const [repo, setRepo] = useState('');
+  const [repoInput, setRepoInput] = useState('');
+  const [remote, setRemote] = useState('');
+  const [git, setGit] = useState(emptyGit);
+  const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
+  const [newBranch, setNewBranch] = useState('');
+  const [folder, setFolder] = useState('snapshots/superset/assets');
+  const [ref, setRef] = useState('HEAD');
+  const [busy, setBusy] = useState('');
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState<{ message: string; details?: unknown }>();
+  const [assets, setAssets] = useState<AssetSummary[]>([]);
+  const [selected, setSelected] = useState<string[]>([]);
+  const [partial, setPartial] = useState(false);
+  const [preview, setPreview] = useState<Preview>();
+  const [written, setWritten] = useState(false);
+  const [commitMessage, setCommitMessage] = useState('');
+  const [plan, setPlan] = useState<Plan>();
+  const [only, setOnly] = useState(false);
+  const [backup, setBackup] = useState(true);
+  const [confirm, setConfirm] = useState('');
+  const [validation, setValidation] = useState<{ sha: string; counts: Record<string, number> }>();
+  const [history, setHistory] = useState<Entry[]>([]);
+  const profile = profiles.find(item => item.id === profileId);
+  const context = { repo, folder, profileId };
+
+  async function run<K extends keyof Requests>(
+    method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void
+  ) {
+    if (busy) return;
+    setBusy(title); setError(undefined); setMessage('');
+    try {
+      const result = await window.mgit.call(method, input);
+      if (result.ok) complete?.(result.data);
+      else setError({ message: result.message, details: result.details });
+    } catch { setError({ message: 'Связь с процессом mGit прервалась.' }); }
+    finally { setBusy(''); }
+  }
+  useEffect(() => { void run('profiles', undefined, 'Загрузка профилей', data => { setProfiles(data); setProfileId(data[0]?.id ?? ''); }); }, []);
+  function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
+  function chooseProfile(id: string) {
+    setProfileId(id); setAssets([]); setSelected([]); invalidate();
+  }
+  function navigate(next: Page) {
+    setPage(next); setError(undefined); setMessage('');
+    if (next === 'История операций') void run('history', undefined, 'Загрузка журнала', setHistory);
+  }
+  function saveProfile(event: FormEvent) {
+    event.preventDefault();
+    void run('save', editor, 'Сохранение профиля', value => {
+      const saved = value.at(-1)!;
+      setProfiles(value); chooseProfile(saved.id); setEditor({ ...emptyProfile }); setMessage('Профиль сохранён.');
+    });
+  }
+  function setOpened(result: { repo: string; state: GitState }) {
+    setRepo(result.repo); setRepoInput(result.repo); setGit(result.state); setGitDiff(undefined); invalidate(); setMessage('Репозиторий открыт.');
+  }
+  function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
+  function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
+    if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
+    else setError({ message: 'На цели есть расхождения.', details: result.issues });
+  }
+
+  const contextPanel = <div className="context">
+    <label>Стенд<select value={profileId} disabled={only && page === 'Импорт'} onChange={e => chooseProfile(e.target.value)}>
+      <option value="">Выберите стенд</option>{profiles.map(item => <option value={item.id} key={item.id}>{item.name} · {item.environment}</option>)}</select></label>
+    <label>Репозиторий<div className="readout" title={repo}>{repo || 'Откройте репозиторий'}</div></label>
+    <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
+      {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
+    <label>Каталог снимка<input value={folder} onChange={e => { setFolder(e.target.value); invalidate(); }}/></label>
+    <datalist id="refs">{git.branches.map(name => <option key={name} value={name}/>)}</datalist>
+    {profile && <span className={'environment ' + profile.environment.toLowerCase()}>{profile.environment}</span>}
+  </div>;
+
+  return <div className="shell">
+    <aside>
+      <div className="brand"><span className="brand-icon">m</span><strong>mGit</strong></div>
+      <nav aria-label="Разделы">{pages.map((name, index) => <button disabled={!!busy} className={page === name ? 'current' : ''} key={name} onClick={() => navigate(name)}>
+        <Icon index={index}/><span>{name}</span>
+      </button>)}</nav>
+      <div className="adapter"><span></span>Apache Superset</div>
+    </aside>
+    <main>
+      <header><div><h1>{page}</h1><p>{{
+        'Стенды': 'Подключения к окружениям Apache Superset',
+        'Репозитории': 'Локальный Git, ветки и удалённый репозиторий',
+        'Экспорт': 'Подготовьте снимок Superset и просмотрите изменения перед записью в Git',
+        'Импорт': 'Проверьте снимок из Git и примените его к выбранному Superset',
+        'История операций': 'Журнал операций mGit',
+        'Настройки': 'Авторизация, сертификаты и подключения для импорта'
+      }[page]}</p></div><span className="header-mark">Git / Superset</span></header>
+      {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
+      {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
+      {message && <div role="status" className="notice success">{message}</div>}
+      <fieldset disabled={Boolean(busy)}>
+      {page === 'Стенды' && <>
+        <section className="panel">
+          <div className="section-title"><h2>Профили Superset</h2><button onClick={() => { setEditor({ ...emptyProfile }); navigate('Настройки'); }}>Новый профиль</button></div>
+          {profiles.length === 0 ? <p className="empty">Добавьте URL стенда и учётные данные Superset, чтобы проверить подключение.</p> :
+            <div className="profile-list">{profiles.map(item => <div className={'profile-row ' + (item.id === profileId ? 'selected' : '')} key={item.id}>
+              <button className="profile-select" onClick={() => chooseProfile(item.id)}><strong>{item.name}</strong><span>{item.url}</span></button>
+              <span className={'environment ' + item.environment.toLowerCase()}>{item.environment}</span>
+              <button onClick={() => run('probe', item.id, 'Проверка стенда', data => setMessage(
+                'Superset ' + (data.version || '· версия не определена') + '. Admin: ' + (data.admin ? 'да' : 'нет') +
+                '. API экспорта: ' + (data.export ? 'да' : 'нет') + '. API импорта: ' + (data.import ? 'да' : 'нет') + '.'
+              ))}>Проверить</button>
+              <button onClick={() => { setEditor({ ...item }); navigate('Настройки'); }}>Изменить</button>
+            </div>)}</div>}
+        </section>
+      </>}
+      {page === 'Настройки' && <section className="panel">
+        <div className="section-title"><h2>{editor.id ? 'Редактирование профиля' : 'Новый профиль'}</h2>
+          {profiles.length > 0 && <select aria-label="Редактируемый профиль" value={editor.id || ''} onChange={e => setEditor(profiles.find(item => item.id === e.target.value) ?? { ...emptyProfile })}>
+            <option value="">Новый профиль</option>{profiles.map(item => <option key={item.id} value={item.id}>{item.name} · {item.environment}</option>)}</select>}</div>
+        <form onSubmit={saveProfile}>
+          <div className="form-grid">
+            <label>Название<input value={editor.name} required onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>
+            <label>URL Superset<input placeholder="https://superset.example.com" value={editor.url} required onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
+            <label>Окружение<select value={editor.environment} onChange={e => setEditor({ ...editor, environment: e.target.value as Environment })}>
+              {['DEV', 'TEST', 'PREPROD', 'PROD'].map(value => <option key={value}>{value}</option>)}</select></label>
+            <label>Авторизация<select value={editor.auth} onChange={e => setEditor({ ...editor, auth: e.target.value as ProfileInput['auth'], credential: '' })}>
+              <option value="db">Пользователь и пароль</option><option value="token">Токен доступа</option></select></label>
+            {editor.auth === 'db' && <label>Пользователь<input value={editor.username ?? ''} required onChange={e => setEditor({ ...editor, username: e.target.value })}/></label>}
+            <label>{editor.auth === 'db' ? 'Пароль' : 'Токен доступа'}<input autoComplete="new-password" type="password" value={editor.credential || ''} placeholder={editor.id ? 'Введите для замены' : ''}
+              onChange={e => setEditor({ ...editor, credential: e.target.value })}/></label>
+            <label className="wide">Корпоративный CA · PEM<textarea rows={3} spellCheck={false} value={editor.ca ?? ''} onChange={e => setEditor({ ...editor, ca: e.target.value })}/></label>
+            <label className="wide">Подключения целевого окружения<textarea rows={4} spellCheck={false} autoComplete="off" placeholder="UUID SQLAlchemy URI · одно подключение на строку"
+              value={editor.mappings ?? ''} onChange={e => setEditor({ ...editor, mappings: e.target.value })}/></label>
+          </div>
+          {editor.id && <p className="hint">Настроено UUID: {profiles.find(item => item.id === editor.id)?.mappingIds.join(', ') || '—'}</p>}
+          {editor.id && <label className="check"><input type="checkbox" checked={!!editor.clearMappings} onChange={e => setEditor({ ...editor, clearMappings: e.target.checked })}/>Очистить ранее сохранённые подключения</label>}
+          <div className="actions"><button className="primary" type="submit">Сохранить профиль</button></div>
+        </form>
+      </section>}
+      {page === 'Репозитории' && <>
+        <section className="panel"><h2>Репозиторий</h2><div className="form-grid">
+          <label className="wide">Локальный путь<input value={repoInput} onChange={e => setRepoInput(e.target.value)} placeholder="D:\repos\superset-config"/></label>
+          <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button>
+            <button className="primary" disabled={!repoInput} onClick={() => run('open', repoInput, 'Открытие репозитория', setOpened)}>Открыть</button></div>
+          <label className="wide">HTTPS URL для клонирования<input value={remote} placeholder="https://devops.example.com/Collection/Project/_git/Repository" onChange={e => setRemote(e.target.value)}/></label>
+        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></section>
+        {repo && <section className="panel"><div className="section-title"><h2>Состояние Git</h2><button onClick={() => run('status', repo, 'Получение статуса', setGit)}>Обновить</button></div>
+          <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>
+          <pre className="readout">{git.status || 'Рабочее дерево чистое.'}</pre>
+          <div className="actions"><button onClick={() => run('diff', repo, 'Чтение Git diff', setGitDiff)}>Показать Git diff</button>
+            <button onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>Fetch</button>
+            <button disabled={!git.head || !git.branch} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>Push в origin</button></div>
+          {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
+            <details open><summary>Рабочее дерево</summary><pre>{gitDiff.unstaged || '—'}</pre></details></div>}
+          <div className="actions"><input aria-label="Имя ветки" value={newBranch} onChange={e => setNewBranch(e.target.value)} list="branches" placeholder="Имя локальной ветки"/>
+            <datalist id="branches">{git.branches.map(branch => <option key={branch} value={branch}/>)}</datalist>
+            <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: false }, 'Переключение ветки', updateGit)}>Переключить</button>
+            <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
+        </section>}
+      </>}
+      {page === 'Экспорт' && <>{contextPanel}<section className="panel">
+        <h2>Состав снимка</h2>
+        <label className="check"><input type="checkbox" checked={partial} onChange={e => { setPartial(e.target.checked); invalidate(); }}/>Выбор объектов с зависимостями</label>
+        {partial && <><div className="actions"><button disabled={!profile} onClick={() => run('inventory', profileId, 'Получение объектов Superset', value => { setAssets(value); setSelected([]); invalidate(); })}>Загрузить список объектов</button></div>
+          <div className="asset-list">{assets.map(asset => <label className="check" key={asset.uuid}><input type="checkbox" checked={selected.includes(asset.uuid)} onChange={e => {
+            setSelected(e.target.checked ? [...selected, asset.uuid] : selected.filter(id => id !== asset.uuid)); invalidate();
+          }}/>{asset.name} <span className="hint">{labels[asset.kind]}</span></label>)}</div></>}
+        <div className="actions"><button className="primary" disabled={!profile || !repo || !git.branch || (partial && !selected.length)}
+          onClick={() => { invalidate(); void run('exportPreview', { ...context, selected: partial ? selected : [] }, 'Экспорт и проверка YAML', setPreview); }}>Подготовить экспорт</button></div>
+      </section>
+      {preview && <section className="panel"><h2>Изменения снимка</h2><Counts values={preview.counts}/>
+        <p className="hint">Проверки формата, зависимостей и секретов пройдены. Файлов с изменениями: {preview.changes.length}.</p>
+        <Changes key={preview.id} changes={preview.changes}/>
+        <div className="actions"><button className="primary" disabled={written || !preview.changes.length}
+          onClick={() => run('write', preview.id, 'Запись снимка', state => { setGit(state); setWritten(true); setMessage('Снимок записан.'); })}>Записать снимок</button></div>
+        {written && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage} onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
+          <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: preview.id, message: commitMessage }, 'Создание коммита', result => {
+            updateGit(result); setRef(result.head); setCommitMessage(''); setMessage('Коммит создан: ' + result.head);
+          })}>Создать коммит</button></div>}
+      </section>}</>}
+      {page === 'Импорт' && <>{contextPanel}<section className="panel"><h2>Предварительная проверка</h2>
+        <label className="check"><input type="checkbox" checked={only} onChange={e => { setOnly(e.target.checked); invalidate(); }}/>Только метаданные · локальная проверка</label>
+        <div className="actions"><button disabled={!repo || !ref.trim()} className={only ? 'primary' : ''}
+          onClick={() => run('validate', { repo, ref, folder }, 'Локальная проверка', result => { setValidation(result); setMessage('Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
+          {!only && <><button className="primary" disabled={!profile || !repo || !ref.trim()} onClick={() => {
+            setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref }, 'Подготовка плана импорта', setPlan);
+          }}>Построить план</button><button disabled={!profile || !repo || !ref.trim()} onClick={() => run('verify', { ...context, ref }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
+        </div>
+        {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/></>}
+      </section>
+      {plan && !only && <section className="panel"><h2>План импорта</h2>
+        <p className="hint">{plan.url} · {plan.environment} · Superset {plan.version}</p><p className="hint mono">{plan.sha}</p>
+        <Counts values={plan.counts}/>
+        <div className="asset-list">{plan.assets.map(asset => <div className="plan-row" key={asset.uuid}><span>{asset.name}</span><span className={'tag ' + asset.action}>{actionNames[asset.action ?? '']}</span><span className="hint">{labels[asset.kind]}</span></div>)}</div>
+        <p className="hint">При применении Superset может обращаться к аналитическим подключениям целевого окружения.</p>
+        <label className="check"><input type="checkbox" checked={backup} onChange={e => setBackup(e.target.checked)}/>Сохранить резервный экспорт метаданных</label>
+        {profile?.environment === 'PROD' && <label>Введите название стенда и полный SHA через пробел<input placeholder={profile.name + ' ' + plan.sha} value={confirm} onChange={e => setConfirm(e.target.value)}/></label>}
+        <div className="actions"><button className={profile?.environment === 'PROD' ? 'danger' : 'primary'}
+          disabled={profile?.environment === 'PROD' && confirm !== profile.name + ' ' + plan.sha}
+          onClick={() => run('apply', { id: plan.id, confirm, backup }, 'Импорт и проверка Superset', result => { setPlan(undefined); statusResult(result); })}>Применить коммит</button></div>
+      </section>}</>}
+      {page === 'История операций' && <section className="panel">
+        {history.length === 0 ? <p className="empty">Операций пока нет.</p> : <table><thead><tr><th>Время</th><th>Действие</th><th>Статус</th></tr></thead>
+          <tbody>{history.map((entry, index) => <tr key={entry.time + index}><td>{new Date(entry.time).toLocaleString('ru-RU')}</td><td>{entry.action}</td>
+            <td><span className={'tag ' + (entry.status === 'ok' ? 'add' : 'remove')}>{entry.status === 'ok' ? 'Готово' : 'Ошибка'}</span> {entry.message}</td></tr>)}</tbody></table>}
+      </section>}
+      </fieldset>
+    </main>
+  </div>;
+}
+
+createRoot(document.getElementById('root')!).render(<App/>);
