@@ -7,9 +7,9 @@ import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
 import { assertValid, inspect, summarize } from './core/snapshot';
-import { applyImport, exportSnapshot, inventory, planImport, sourceSnapshot, verifyImport } from './core/workflow';
+import { applyImport, confirmation, exportSnapshot, inventory, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 
-type Stored = { profile: Profile; encrypted: string };
+type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
 type State = { profiles: Stored[]; history: Entry[] };
 let state: State;
 let window: BrowserWindow;
@@ -34,7 +34,10 @@ function unlock(value: Stored): Secret {
   catch { throw new Failure('Защищённые настройки нельзя прочитать. Сохраните профиль заново.', 'storage'); }
 }
 function listProfiles() {
-  return state.profiles.map(item => ({ ...item.profile, mappingIds: Object.keys(unlock(item).connections) }));
+  return state.profiles.map(({ profile, ...item }) => ({
+    id: profile.id, name: profile.name, url: profile.url, auth: profile.auth, username: profile.username, ca: profile.ca,
+    type: item.type ?? 'superset', repo: item.repo ?? '', mappingIds: Object.keys(unlock({ profile, ...item }).connections)
+  }));
 }
 function profileFor(id: string) {
   const item = state.profiles.find(item => item.profile.id === id);
@@ -42,18 +45,24 @@ function profileFor(id: string) {
   const secret = unlock(item);
   return { profile: item.profile, secret, adapter: new Superset(item.profile, secret) };
 }
+function applicationRepo(input: Context) {
+  const repo = state.profiles.find(item => item.profile.id === input.profileId)?.repo;
+  if (!repo || input.repo !== repo) throw new Failure('Откройте Git-репозиторий, указанный в настройках приложения.');
+  return repo;
+}
 async function save(input: ProfileInput) {
-  const environment = input.environment;
-  if (!input.name?.trim() || !['DEV', 'TEST', 'PREPROD', 'PROD'].includes(environment) || !['db', 'token'].includes(input.auth)) {
-    throw new Failure('Укажите название, окружение и способ входа.');
+  const old = state.profiles.find(item => item.profile.id === input.id);
+  if (input.type !== 'superset' || !input.repo?.trim() || !['db', 'token'].includes(input.auth)) {
+    throw new Failure('Укажите тип приложения, папку Git и способ входа.');
   }
   if (input.auth === 'db' && !input.username?.trim()) throw new Failure('Укажите пользователя Superset.');
   if (input.ca && (!input.ca.includes('-----BEGIN CERTIFICATE-----') || /PRIVATE KEY/.test(input.ca))) throw new Failure('Корпоративный CA должен быть сертификатом PEM.');
-  const profile: Profile = { id: input.id || randomUUID(), name: input.name.trim(), url: profileUrl(input.url),
-    environment, auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
-  const old = state.profiles.find(item => item.profile.id === input.id);
+  const url = profileUrl(input.url);
+  const repo = await git.openRepo(input.repo.trim());
+  const profile: Profile = { id: old?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
+    auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
   let secret: Secret = { credential: '', connections: {} };
-  const sameTarget = old?.profile.url === profile.url && old.profile.environment === environment;
+  const sameTarget = old?.profile.url === profile.url;
   if (old && sameTarget) {
     try { secret = unlock(old); } catch { /* A new credential can replace unreadable settings. */ }
     if (old.profile.auth !== input.auth || old.profile.username !== profile.username) secret.credential = '';
@@ -75,7 +84,7 @@ async function save(input: ProfileInput) {
   }
   if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
   const encrypted = safeStorage.encryptString(JSON.stringify(secret)).toString('base64');
-  await persist({ ...state, profiles: [...state.profiles.filter(item => item.profile.id !== profile.id), { profile, encrypted }] });
+  await persist({ ...state, profiles: [...state.profiles.filter(item => item.profile.id !== profile.id), { profile, encrypted, repo, type: input.type }] });
   preparedImport = undefined;
   preparedExport = undefined;
   return listProfiles();
@@ -95,8 +104,9 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async exportPreview(input) {
     preparedExport = undefined;
+    const repo = applicationRepo(input);
     const exported = await exportSnapshot(profileFor(input.profileId).adapter, input.selected);
-    const preview = await git.previewWrite(input.repo, input.folder, exported.files);
+    const preview = await git.previewWrite(repo, input.folder, exported.files);
     const id = randomUUID();
     preparedExport = { ...input, ...exported, id, head: preview.head, branch: preview.branch, written: false };
     return { ...preview, id, counts: exported.counts };
@@ -121,7 +131,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async plan(input) {
     preparedImport = undefined;
-    const source = await sourceSnapshot(input.repo, input.ref, input.folder);
+    const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
     const { profile, secret, adapter } = profileFor(input.profileId);
     const expected = await planImport(adapter, profile, source.files, secret.connections);
     const id = randomUUID();
@@ -130,19 +140,20 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
     return { ...publicPlan, id, sha: source.sha };
   },
   async verify(input) {
-    const source = await sourceSnapshot(input.repo, input.ref, input.folder);
+    const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
     return verifyImport(profileFor(input.profileId).adapter, source.files);
   },
   async apply(input) {
     const prepared = preparedImport;
     if (!prepared || prepared.id !== input.id) throw new Failure('Сначала постройте план импорта.');
+    const { profile, secret, adapter } = profileFor(prepared.profileId);
+    if (input.confirm !== confirmation(profile, prepared.sha)) throw new Failure('Подтвердите импорт названием приложения и полным SHA.');
     let backup: string | undefined;
     if (input.backup) {
       backup = (await dialog.showSaveDialog(window, { defaultPath: 'superset-assets-before-' + prepared.sha.slice(0, 10) + '.zip',
         filters: [{ name: 'ZIP', extensions: ['zip'] }] })).filePath;
       if (!backup) throw new Failure('Выбор файла резервного экспорта отменён.', 'cancelled');
     }
-    const { profile, secret, adapter } = profileFor(prepared.profileId);
     preparedImport = undefined;
     return applyImport(adapter, profile, prepared.files, secret.connections, { sha: prepared.sha, confirm: input.confirm, backup, expected: prepared.expected });
   },

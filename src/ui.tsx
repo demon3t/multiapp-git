@@ -1,19 +1,20 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AssetSummary, Bridge, Change, Entry, Environment, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests } from './core/public';
+import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests } from './core/public';
 import './ui.css';
 
 declare global { interface Window { mgit: Bridge } }
-const pages = ['Стенды', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
+const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
 type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
+const repositoryName = (path: string) => path.split(/[\\/]/).at(-1);
 const icons = ['M3 5h18v5H3z M3 14h18v5H3z M7 7.5h1 M7 16.5h1', 'M5 3h13v17H5z M5 16h13 M8 7h7 M8 10h5', 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6', 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6', 'M3 12a9 9 0 1 0 3-7 M3 4v5h5 M12 7v5l3 2', 'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2'];
 function Icon({ index }: { index: number }) {
   return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
 }
 
-const emptyProfile: ProfileInput = { name: '', url: '', environment: 'DEV', auth: 'db', username: '' };
+const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
 const emptyGit: GitState = { branch: '', status: '', head: '', branches: [] };
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
@@ -25,13 +26,16 @@ function Changes({ changes }: { changes: Change[] }) {
   return <div className="diff">
     <div className="diff-files">{changes.map((entry, i) => <button className={entry === change ? 'active' : ''} key={entry.path} onClick={() => setIndex(i)}>
       <span className={'tag ' + entry.action}>{actionNames[entry.action]}</span><span>{entry.path}</span></button>)}</div>
-    <div className="diff-bodies"><details open><summary>До · {change.path}</summary><pre>{change.before ?? '—'}</pre></details>
-      <details open><summary>После · {change.path}</summary><pre>{change.after ?? '—'}</pre></details></div>
+    <div className="yaml-comparison">
+      <div className="diff-path" title={change.path}>{change.path}</div>
+      <section aria-label="До"><h3>До</h3><pre>{change.before ?? '—'}</pre></section>
+      <section aria-label="После"><h3>После</h3><pre>{change.after ?? '—'}</pre></section>
+    </div>
   </div>;
 }
 
 function App() {
-  const [page, setPage] = useState<Page>('Стенды');
+  const [page, setPage] = useState<Page>('Приложения');
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [profileId, setProfileId] = useState('');
   const [editor, setEditor] = useState<ProfileInput>({ ...emptyProfile });
@@ -60,6 +64,7 @@ function App() {
   const [history, setHistory] = useState<Entry[]>([]);
   const profile = profiles.find(item => item.id === profileId);
   const context = { repo, folder, profileId };
+  const applicationReady = Boolean(profile?.repo && profile.repo === repo);
 
   async function run<K extends keyof Requests>(
     method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void
@@ -74,22 +79,52 @@ function App() {
     finally { setBusy(''); }
   }
   useEffect(() => { void run('profiles', undefined, 'Загрузка профилей', data => { setProfiles(data); setProfileId(data[0]?.id ?? ''); }); }, []);
+  useEffect(() => {
+    if (!profile?.repo) return;
+    let active = true;
+    const path = profile.repo;
+    void window.mgit.call('status', path).then(result => {
+      if (!active) return;
+      if (result.ok) {
+        setRepo(path); setRepoInput(path); setGit(result.data);
+      } else setError({ message: 'Не удалось открыть папку Git приложения. Проверьте её в настройках.' });
+    }).catch(() => {
+      if (active) setError({ message: 'Связь с процессом mGit прервалась.' });
+    });
+    return () => { active = false; };
+  }, [profile?.id, profile?.repo]);
   function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
   function chooseProfile(id: string) {
+    if (id !== profileId) {
+      setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD');
+    }
     setProfileId(id); setAssets([]); setSelected([]); invalidate();
   }
   function navigate(next: Page) {
     setPage(next); setError(undefined); setMessage('');
     if (next === 'История операций') void run('history', undefined, 'Загрузка журнала', setHistory);
   }
+  function editApplication(application?: ProfileSummary) {
+    setEditor(application ? { ...application } : { ...emptyProfile });
+    navigate('Настройки');
+  }
   function saveProfile(event: FormEvent) {
     event.preventDefault();
     void run('save', editor, 'Сохранение профиля', value => {
       const saved = value.at(-1)!;
-      setProfiles(value); chooseProfile(saved.id); setEditor({ ...emptyProfile }); setMessage('Профиль сохранён.');
+      if (saved.id === profileId && saved.repo !== profile?.repo) {
+        setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD');
+      }
+      setProfiles(value); chooseProfile(saved.id); setEditor({ ...emptyProfile });
+      navigate('Приложения'); setMessage('Приложение сохранено.');
     });
   }
   function setOpened(result: { repo: string; state: GitState }) {
+    if (profile?.repo && profile.repo !== result.repo) {
+      setRepoInput(result.repo);
+      setMessage('Репозиторий готов: ' + result.repo + '. Его можно выбрать при добавлении приложения.');
+      return;
+    }
     setRepo(result.repo); setRepoInput(result.repo); setGit(result.state); setGitDiff(undefined); invalidate(); setMessage('Репозиторий открыт.');
   }
   function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
@@ -99,89 +134,107 @@ function App() {
   }
 
   const contextPanel = <div className="context">
-    <label>Стенд<select value={profileId} disabled={only && page === 'Импорт'} onChange={e => chooseProfile(e.target.value)}>
-      <option value="">Выберите стенд</option>{profiles.map(item => <option value={item.id} key={item.id}>{item.name} · {item.environment}</option>)}</select></label>
+    <label>Superset<div className="readout" title={profile?.url}>{profile?.url || 'Выберите приложение'}</div></label>
     <label>Репозиторий<div className="readout" title={repo}>{repo || 'Откройте репозиторий'}</div></label>
     <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
       {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
     <label>Каталог снимка<input value={folder} onChange={e => { setFolder(e.target.value); invalidate(); }}/></label>
     <datalist id="refs">{git.branches.map(name => <option key={name} value={name}/>)}</datalist>
-    {profile && <span className={'environment ' + profile.environment.toLowerCase()}>{profile.environment}</span>}
   </div>;
 
   return <div className="shell">
+    <div className="tabbar">
+      <button className="brand" onClick={() => navigate('Приложения')} disabled={!!busy}><strong>mGit</strong></button>
+      <div className="app-tabs" aria-label="Открытые приложения">
+        {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId}
+          disabled={!!busy} onClick={() => { chooseProfile(item.id); if (page === 'Настройки') navigate('Приложения'); }}
+          title={item.url}><Icon index={0}/>{item.name}</button>)}
+      </div>
+      <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
+    </div>
+    <div className="toolbar">
+      <button disabled={!repo || !!busy} onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>↓ Fetch</button>
+      <button disabled={!repo || !git.head || !git.branch || !!busy} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>↑ Push</button>
+      <button disabled={!repo || !!busy} onClick={() => run('status', repo, 'Получение статуса', setGit)}>↻ Обновить</button>
+      <button disabled={!applicationReady || !!busy} onClick={() => navigate('Экспорт')}><Icon index={2}/>Экспорт</button>
+      <button disabled={!applicationReady || !!busy} onClick={() => navigate('Импорт')}><Icon index={3}/>Импорт</button>
+    </div>
     <aside>
-      <div className="brand"><span className="brand-icon">m</span><strong>mGit</strong></div>
       <nav aria-label="Разделы">{pages.map((name, index) => <button disabled={!!busy} className={page === name ? 'current' : ''} key={name} onClick={() => navigate(name)}>
         <Icon index={index}/><span>{name}</span>
       </button>)}</nav>
-      <div className="adapter"><span></span>Apache Superset</div>
+      {repo && <div className="branches">
+        <h2>Ветки и теги</h2>
+        {[...new Set([git.branch, ...git.branches].filter(Boolean))].map(branch =>
+          <button key={branch} disabled={!!busy} className={branch === git.branch ? 'current' : ''}
+            title={branch} onClick={() => { navigate('Импорт'); setRef(branch); invalidate(); }}>
+            <span className="branch-dot" aria-hidden="true"/>{branch}</button>)}
+      </div>}
     </aside>
     <main>
-      <header><div><h1>{page}</h1><p>{{
-        'Стенды': 'Подключения к окружениям Apache Superset',
-        'Репозитории': 'Локальный Git, ветки и удалённый репозиторий',
-        'Экспорт': 'Подготовьте снимок Superset и просмотрите изменения перед записью в Git',
-        'Импорт': 'Проверьте снимок из Git и примените его к выбранному Superset',
-        'История операций': 'Журнал операций mGit',
-        'Настройки': 'Авторизация, сертификаты и подключения для импорта'
-      }[page]}</p></div><span className="header-mark">Git / Superset</span></header>
+      <header><h1>{page}</h1></header>
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
       {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
       {message && <div role="status" className="notice success">{message}</div>}
       <fieldset disabled={Boolean(busy)}>
-      {page === 'Стенды' && <>
+      {page === 'Приложения' && <>
         <section className="panel">
-          <div className="section-title"><h2>Профили Superset</h2><button onClick={() => { setEditor({ ...emptyProfile }); navigate('Настройки'); }}>Новый профиль</button></div>
-          {profiles.length === 0 ? <p className="empty">Добавьте URL стенда и учётные данные Superset, чтобы проверить подключение.</p> :
+          <div className="section-title"><h2>Подключённые приложения</h2><button className="primary" onClick={() => editApplication()}>Добавить приложение</button></div>
+          {profiles.length === 0 ? <p className="empty">Добавьте приложение и выберите папку его Git-репозитория.</p> :
             <div className="profile-list">{profiles.map(item => <div className={'profile-row ' + (item.id === profileId ? 'selected' : '')} key={item.id}>
-              <button className="profile-select" onClick={() => chooseProfile(item.id)}><strong>{item.name}</strong><span>{item.url}</span></button>
-              <span className={'environment ' + item.environment.toLowerCase()}>{item.environment}</span>
+              <button className="profile-select" onClick={() => chooseProfile(item.id)}><strong>{item.name}</strong><span>Apache Superset · {item.url}</span><span>{item.repo || 'Укажите папку Git'}</span></button>
               <button onClick={() => run('probe', item.id, 'Проверка стенда', data => setMessage(
                 'Superset ' + (data.version || '· версия не определена') + '. Admin: ' + (data.admin ? 'да' : 'нет') +
                 '. API экспорта: ' + (data.export ? 'да' : 'нет') + '. API импорта: ' + (data.import ? 'да' : 'нет') + '.'
               ))}>Проверить</button>
-              <button onClick={() => { setEditor({ ...item }); navigate('Настройки'); }}>Изменить</button>
+              <button onClick={() => editApplication(item)}>Изменить</button>
             </div>)}</div>}
         </section>
       </>}
       {page === 'Настройки' && <section className="panel">
-        <div className="section-title"><h2>{editor.id ? 'Редактирование профиля' : 'Новый профиль'}</h2>
-          {profiles.length > 0 && <select aria-label="Редактируемый профиль" value={editor.id || ''} onChange={e => setEditor(profiles.find(item => item.id === e.target.value) ?? { ...emptyProfile })}>
-            <option value="">Новый профиль</option>{profiles.map(item => <option key={item.id} value={item.id}>{item.name} · {item.environment}</option>)}</select>}</div>
+        <div className="section-title"><h2>{editor.id ? 'Редактирование приложения' : 'Добавление приложения'}</h2>
+          {profiles.length > 0 && <select aria-label="Редактируемое приложение" value={editor.id || ''} onChange={e => setEditor(profiles.find(item => item.id === e.target.value) ?? { ...emptyProfile })}>
+            <option value="">Добавить приложение</option>{profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</div>
         <form onSubmit={saveProfile}>
           <div className="form-grid">
-            <label>Название<input value={editor.name} required onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>
-            <label>URL Superset<input placeholder="https://superset.example.com" value={editor.url} required onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
-            <label>Окружение<select value={editor.environment} onChange={e => setEditor({ ...editor, environment: e.target.value as Environment })}>
-              {['DEV', 'TEST', 'PREPROD', 'PROD'].map(value => <option key={value}>{value}</option>)}</select></label>
+            <label>Тип приложения<select value={editor.type} required onChange={e => setEditor({ ...editor, type: e.target.value })}>
+              <option value="">Выберите тип</option><option value="superset">Apache Superset</option></select></label>
+            <label>Папка Git<div className="path-input"><input value={editor.repo} required onChange={e => setEditor({ ...editor, repo: e.target.value })}/>
+              <button type="button" onClick={() => run('pickDirectory', undefined, 'Выбор папки Git', value => { if (value) setEditor({ ...editor, repo: value }); })}>Выбрать</button></div></label>
+            {editor.type === 'superset' && <>
+            <label className="wide">URL Superset<input placeholder="https://superset.example.com" value={editor.url} required onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
             <label>Авторизация<select value={editor.auth} onChange={e => setEditor({ ...editor, auth: e.target.value as ProfileInput['auth'], credential: '' })}>
               <option value="db">Пользователь и пароль</option><option value="token">Токен доступа</option></select></label>
             {editor.auth === 'db' && <label>Пользователь<input value={editor.username ?? ''} required onChange={e => setEditor({ ...editor, username: e.target.value })}/></label>}
-            <label>{editor.auth === 'db' ? 'Пароль' : 'Токен доступа'}<input autoComplete="new-password" type="password" value={editor.credential || ''} placeholder={editor.id ? 'Введите для замены' : ''}
+            <label>{editor.auth === 'db' ? 'Пароль' : 'Токен доступа'}<input autoComplete="new-password" type="password" required={!editor.id} value={editor.credential || ''} placeholder={editor.id ? 'Введите для замены' : ''}
               onChange={e => setEditor({ ...editor, credential: e.target.value })}/></label>
+            </>}
+          </div>
+          {editor.id && <details className="advanced"><summary>Дополнительные параметры Superset</summary>
+          <div className="form-grid">
+            <label className="wide">Название<input value={editor.name} onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>
             <label className="wide">Корпоративный CA · PEM<textarea rows={3} spellCheck={false} value={editor.ca ?? ''} onChange={e => setEditor({ ...editor, ca: e.target.value })}/></label>
-            <label className="wide">Подключения целевого окружения<textarea rows={4} spellCheck={false} autoComplete="off" placeholder="UUID SQLAlchemy URI · одно подключение на строку"
+            <label className="wide">Подключения для импорта<textarea rows={4} spellCheck={false} autoComplete="off" placeholder="UUID SQLAlchemy URI · одно подключение на строку"
               value={editor.mappings ?? ''} onChange={e => setEditor({ ...editor, mappings: e.target.value })}/></label>
           </div>
           {editor.id && <p className="hint">Настроено UUID: {profiles.find(item => item.id === editor.id)?.mappingIds.join(', ') || '—'}</p>}
           {editor.id && <label className="check"><input type="checkbox" checked={!!editor.clearMappings} onChange={e => setEditor({ ...editor, clearMappings: e.target.checked })}/>Очистить ранее сохранённые подключения</label>}
-          <div className="actions"><button className="primary" type="submit">Сохранить профиль</button></div>
+          </details>}
+          <div className="actions"><button className="primary" type="submit">Сохранить приложение</button></div>
         </form>
       </section>}
       {page === 'Репозитории' && <>
-        <section className="panel"><h2>Репозиторий</h2><div className="form-grid">
+        <details className="panel" open={profile?.repo ? undefined : true}><summary>Открыть или клонировать репозиторий</summary><div className="form-grid">
           <label className="wide">Локальный путь<input value={repoInput} onChange={e => setRepoInput(e.target.value)} placeholder="D:\repos\superset-config"/></label>
           <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button>
             <button className="primary" disabled={!repoInput} onClick={() => run('open', repoInput, 'Открытие репозитория', setOpened)}>Открыть</button></div>
           <label className="wide">HTTPS URL для клонирования<input value={remote} placeholder="https://devops.example.com/Collection/Project/_git/Repository" onChange={e => setRemote(e.target.value)}/></label>
-        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></section>
-        {repo && <section className="panel"><div className="section-title"><h2>Состояние Git</h2><button onClick={() => run('status', repo, 'Получение статуса', setGit)}>Обновить</button></div>
+        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></details>
+        {repo && <section className="panel"><h2>Рабочее дерево</h2>
+          <p className="hint" title={repo}>{repo}</p>
           <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>
           <pre className="readout">{git.status || 'Рабочее дерево чистое.'}</pre>
-          <div className="actions"><button onClick={() => run('diff', repo, 'Чтение Git diff', setGitDiff)}>Показать Git diff</button>
-            <button onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>Fetch</button>
-            <button disabled={!git.head || !git.branch} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>Push в origin</button></div>
+          <div className="actions"><button onClick={() => run('diff', repo, 'Чтение Git diff', setGitDiff)}>Показать Git diff</button></div>
           {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
             <details open><summary>Рабочее дерево</summary><pre>{gitDiff.unstaged || '—'}</pre></details></div>}
           <div className="actions"><input aria-label="Имя ветки" value={newBranch} onChange={e => setNewBranch(e.target.value)} list="branches" placeholder="Имя локальной ветки"/>
@@ -197,7 +250,7 @@ function App() {
           <div className="asset-list">{assets.map(asset => <label className="check" key={asset.uuid}><input type="checkbox" checked={selected.includes(asset.uuid)} onChange={e => {
             setSelected(e.target.checked ? [...selected, asset.uuid] : selected.filter(id => id !== asset.uuid)); invalidate();
           }}/>{asset.name} <span className="hint">{labels[asset.kind]}</span></label>)}</div></>}
-        <div className="actions"><button className="primary" disabled={!profile || !repo || !git.branch || (partial && !selected.length)}
+        <div className="actions"><button className="primary" disabled={!applicationReady || !git.branch || (partial && !selected.length)}
           onClick={() => { invalidate(); void run('exportPreview', { ...context, selected: partial ? selected : [] }, 'Экспорт и проверка YAML', setPreview); }}>Подготовить экспорт</button></div>
       </section>
       {preview && <section className="panel"><h2>Изменения снимка</h2><Counts values={preview.counts}/>
@@ -214,21 +267,21 @@ function App() {
         <label className="check"><input type="checkbox" checked={only} onChange={e => { setOnly(e.target.checked); invalidate(); }}/>Только метаданные · локальная проверка</label>
         <div className="actions"><button disabled={!repo || !ref.trim()} className={only ? 'primary' : ''}
           onClick={() => run('validate', { repo, ref, folder }, 'Локальная проверка', result => { setValidation(result); setMessage('Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
-          {!only && <><button className="primary" disabled={!profile || !repo || !ref.trim()} onClick={() => {
+          {!only && <><button className="primary" disabled={!applicationReady || !ref.trim()} onClick={() => {
             setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref }, 'Подготовка плана импорта', setPlan);
-          }}>Построить план</button><button disabled={!profile || !repo || !ref.trim()} onClick={() => run('verify', { ...context, ref }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
+          }}>Построить план</button><button disabled={!applicationReady || !ref.trim()} onClick={() => run('verify', { ...context, ref }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
         </div>
         {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/></>}
       </section>
       {plan && !only && <section className="panel"><h2>План импорта</h2>
-        <p className="hint">{plan.url} · {plan.environment} · Superset {plan.version}</p><p className="hint mono">{plan.sha}</p>
+        <p className="hint">{plan.url} · Superset {plan.version}</p><p className="hint mono">{plan.sha}</p>
         <Counts values={plan.counts}/>
         <div className="asset-list">{plan.assets.map(asset => <div className="plan-row" key={asset.uuid}><span>{asset.name}</span><span className={'tag ' + asset.action}>{actionNames[asset.action ?? '']}</span><span className="hint">{labels[asset.kind]}</span></div>)}</div>
         <p className="hint">При применении Superset может обращаться к аналитическим подключениям целевого окружения.</p>
         <label className="check"><input type="checkbox" checked={backup} onChange={e => setBackup(e.target.checked)}/>Сохранить резервный экспорт метаданных</label>
-        {profile?.environment === 'PROD' && <label>Введите название стенда и полный SHA через пробел<input placeholder={profile.name + ' ' + plan.sha} value={confirm} onChange={e => setConfirm(e.target.value)}/></label>}
-        <div className="actions"><button className={profile?.environment === 'PROD' ? 'danger' : 'primary'}
-          disabled={profile?.environment === 'PROD' && confirm !== profile.name + ' ' + plan.sha}
+        {profile && <label>Введите название приложения и полный SHA через пробел<input placeholder={profile.name + ' ' + plan.sha} value={confirm} onChange={e => setConfirm(e.target.value)}/></label>}
+        <div className="actions"><button className="primary"
+          disabled={!profile || confirm !== profile.name + ' ' + plan.sha}
           onClick={() => run('apply', { id: plan.id, confirm, backup }, 'Импорт и проверка Superset', result => { setPlan(undefined); statusResult(result); })}>Применить коммит</button></div>
       </section>}</>}
       {page === 'История операций' && <section className="panel">
@@ -238,6 +291,12 @@ function App() {
       </section>}
       </fieldset>
     </main>
+    <footer className="statusbar">
+      <span title={repo}>{repo ? repositoryName(repo) : 'Git-репозиторий не открыт'}</span>
+      {git.branch && <span className="branch-status"><span className="branch-dot" aria-hidden="true"/>{git.branch}</span>}
+      {git.head && <span className="mono" title={git.head}>{git.head.slice(0, 8)}</span>}
+      {repo && <span className="tree-status">{git.status ? 'Есть изменения' : 'Рабочее дерево чистое'}</span>}
+    </footer>
   </div>;
 }
 

@@ -2,7 +2,7 @@ export const kinds = ['databases', 'datasets', 'charts', 'dashboards', 'queries'
 export type Kind = typeof kinds[number];
 export type Environment = 'DEV' | 'TEST' | 'PREPROD' | 'PROD';
 export type Profile = {
-  id: string; name: string; url: string; environment: Environment; auth: 'db' | 'token';
+  id: string; name: string; url: string; environment?: Environment; auth: 'db' | 'token';
   username?: string; ca?: string;
 };
 export type Secret = { credential: string; connections: Record<string, string> };

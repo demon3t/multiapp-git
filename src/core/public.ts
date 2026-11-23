@@ -3,13 +3,13 @@ import type { Environment, Profile } from './model';
 
 export type { Change, Environment, Profile };
 export type GitState = { branch: string; status: string; head: string; branches: string[] };
-export type ProfileInput = Omit<Profile, 'id'> & { id?: string; credential?: string; mappings?: string; clearMappings?: boolean };
-export type ProfileSummary = Profile & { mappingIds: string[] };
+export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
+export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
 export type Context = { repo: string; folder: string; profileId: string };
 export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
 export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
 export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[] };
-export type Plan = { id: string; sha: string; version: string; url: string; environment: Environment; counts: Record<string, number>; assets: AssetSummary[] };
+export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[] };
 export type Verification = { verified: boolean; checked: number; issues: unknown[] };
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
