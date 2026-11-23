@@ -1,0 +1,41 @@
+{
+  "name": "mgit",
+  "version": "0.3.0",
+  "description": "Version control for application configuration",
+  "main": "dist/main.js",
+  "scripts": {
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "build": "tsc && vite build --base ./ --outDir dist/ui",
+    "start": "npm run build && electron .",
+    "dist": "npm run build && electron-builder --win nsis --x64",
+    "test:integration": "node --test tests/superset/integration.cjs"
+  },
+  "keywords": [],
+  "author": "mGit",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "semver": "^7.8.6",
+    "yaml": "^2.9.1",
+    "yauzl": "^3.4.0",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/semver": "^7.8.0",
+    "@types/yauzl": "^2.10.3",
+    "@types/yazl": "^3.3.1",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.8"
+  },
+  "productName": "mGit",
+  "bin": {
+    "mgit": "dist/cli.js"
+  }
+}

@@ -1,0 +1,56 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const { mkdtemp, rm, stat } = require('node:fs/promises');
+const { tmpdir } = require('node:os');
+const { join, resolve } = require('node:path');
+const { execFileSync } = require('node:child_process');
+const { fixture, ids } = require('../fixture.cjs');
+const { Superset } = require('../../dist/core/superset');
+const git = require('../../dist/core/git');
+const flow = require('../../dist/core/workflow');
+const { inspect } = require('../../dist/core/snapshot');
+
+const make = (port, name) => ({ id: name, name, url: 'http://127.0.0.1:' + port, username: 'admin', auth: 'db', environment: 'TEST' });
+const secret = { credential: 'mgit-integration', connections: { [ids.database]: 'postgresql://mgit:mgit-local-only@analytics:5432/mgit' } };
+
+test('Superset 6.1.0 → Git commit → independent Superset 6.1.0 → repeat', { timeout: 180_000 }, async t => {
+  const repo = await mkdtemp(join(tmpdir(), 'mgit-live-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const run = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+  run('init', '-b', 'main');
+  run('config', 'user.name', 'mGit integration');
+  run('config', 'user.email', 'test@example.invalid');
+  run('commit', '--allow-empty', '-m', 'Initialize');
+  const source = new Superset(make(18088, 'Source'), secret);
+  const targetProfile = make(18089, 'Target');
+  const target = new Superset(targetProfile, secret);
+  assert.equal((await source.probe()).version, '6.1.0');
+  assert.equal((await target.probe()).version, '6.1.0');
+  await source.upload(fixture(), secret.connections);
+  const exported = await flow.exportSnapshot(source);
+  assert.deepEqual(exported.counts, { databases: 1, datasets: 1, charts: 1, dashboards: 1, queries: 1 });
+  const folder = 'snapshots/test/assets';
+  const preview = await git.previewWrite(repo, folder, exported.files);
+  assert.equal(preview.changes.length, 6);
+  await git.writeSnapshot(repo, folder, exported.files, preview);
+  const { head: sha } = await git.commitSnapshot(repo, folder, 'Export Superset metadata', { ...preview, files: exported.files });
+  const repeatedExport = await flow.exportSnapshot(source);
+  assert.equal((await git.previewWrite(repo, folder, repeatedExport.files)).changes.length, 0);
+  const snapshot = await flow.sourceSnapshot(repo, sha, folder);
+  const cli = resolve(__dirname, '../../dist/cli.js');
+  const validation = JSON.parse(execFileSync(process.execPath, [cli, 'validate', '--repo', repo, '--folder', folder, '--commit', sha], { encoding: 'utf8' }));
+  assert.deepEqual(validation, { ok: true, action: 'validate', data: { sha, counts: exported.counts } });
+  const plan = await flow.planImport(target, targetProfile, snapshot.files, secret.connections);
+  console.log('Planned actions: ' + plan.assets.map(asset => asset.kind + '=' + asset.action).join(', '));
+  assert.equal(plan.assets.length, 5);
+  const backup = join(repo, 'target-before.zip');
+  assert.deepEqual(await flow.applyImport(target, targetProfile, snapshot.files, secret.connections, { sha, backup, expected: plan }),
+    { verified: true, checked: 5, issues: [] });
+  assert((await stat(backup)).size > 0);
+  const next = await flow.planImport(target, targetProfile, snapshot.files, secret.connections);
+  assert(next.assets.every(asset => asset.action === 'update'));
+  assert.equal((await flow.applyImport(target, targetProfile, snapshot.files, secret.connections, { sha, expected: next })).checked, 5);
+  const observed = inspect(await target.snapshot());
+  assert.equal(observed.assets.length, 5);
+  assert.deepEqual(new Set(observed.assets.map(asset => asset.uuid)), new Set(Object.values(ids)));
+});

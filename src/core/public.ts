@@ -1,0 +1,46 @@
+import type { Change } from './git';
+import type { Environment, Profile } from './model';
+import type { UpdateStatus } from './updates';
+
+export type { Change, Environment, Profile };
+export type UpdateView = UpdateStatus & { automatic?: boolean; hasToken: boolean };
+export type GitState = { branch: string; status: string; head: string; branches: string[] };
+export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
+export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
+export type Context = { repo: string; folder: string; profileId: string };
+export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
+export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
+export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[] };
+export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[] };
+export type Verification = { verified: boolean; checked: number; issues: unknown[] };
+export type Requests = {
+  profiles: [undefined, ProfileSummary[]];
+  save: [ProfileInput, ProfileSummary[]];
+  probe: [string, { version: string; apiVersion: string; admin: boolean; export: boolean; import: boolean }];
+  pickDirectory: [undefined, string];
+  open: [string, { repo: string; state: GitState }];
+  clone: [{ url: string; path: string }, { repo: string; state: GitState }];
+  status: [string, GitState];
+  diff: [string, { staged: string; unstaged: string }];
+  branch: [{ repo: string; branch: string; create: boolean }, GitState];
+  fetch: [string, GitState];
+  push: [string, GitState];
+  inventory: [string, AssetSummary[]];
+  exportPreview: [Context & { selected: string[] }, Preview];
+  write: [string, GitState];
+  commit: [{ id: string; message: string }, GitState];
+  validate: [{ repo: string; folder: string; ref: string }, { sha: string; counts: Record<string, number> }];
+  plan: [Context & { ref: string }, Plan];
+  verify: [Context & { ref: string }, Verification];
+  apply: [{ id: string; confirm: string; backup: boolean }, Verification];
+  history: [undefined, Entry[]];
+  updateStatus: [undefined, UpdateView];
+  checkUpdate: [undefined, UpdateView];
+  saveUpdateSettings: [{ automatic: boolean; token?: string; clearToken?: boolean }, UpdateView];
+  openReleases: [undefined, void];
+};
+export type Response<T> = { ok: true; data: T } | { ok: false; message: string; code: string; details?: unknown };
+export type Bridge = {
+  call<K extends keyof Requests>(method: K, input: Requests[K][0]): Promise<Response<Requests[K][1]>>;
+  onUpdate(listener: (status: UpdateView) => void): () => void;
+};

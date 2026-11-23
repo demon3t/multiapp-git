@@ -1,0 +1,45 @@
+x-superset: &superset
+  image: apache/superset:6.1.0
+  environment:
+    SUPERSET_CONFIG_PATH: /app/mgit_config.py
+    FLASK_APP: superset
+  entrypoint: ["/bin/sh", "-ec"]
+  command:
+    - |
+      superset db upgrade
+      if [ ! -f /app/superset_home/mgit-initialized ]; then
+        superset fab create-admin --username admin --firstname Local --lastname Admin --email local@example.invalid --password mgit-integration || superset fab reset-password --username admin --password mgit-integration
+        touch /app/superset_home/mgit-initialized
+      fi
+      superset init
+      exec superset run --host 0.0.0.0 --port 8088
+  depends_on:
+    analytics:
+      condition: service_healthy
+services:
+  analytics:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mgit
+      POSTGRES_PASSWORD: mgit-local-only
+      POSTGRES_DB: mgit
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mgit -d mgit"]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  source:
+    <<: *superset
+    ports: ["127.0.0.1:18088:8088"]
+    volumes:
+      - ./config.py:/app/mgit_config.py:ro
+      - source:/app/superset_home
+  target:
+    <<: *superset
+    ports: ["127.0.0.1:18089:8088"]
+    volumes:
+      - ./config.py:/app/mgit_config.py:ro
+      - target:/app/superset_home
+volumes:
+  source:
+  target:
