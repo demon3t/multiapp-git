@@ -6,7 +6,7 @@ import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model'
 import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
-import { assertValid, inspect, summarize } from './core/snapshot';
+import { assertValid, compatibleSnapshot, inspect, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, inventory, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 import { checkRelease, releasesPage, UpdateStatus } from './core/updates';
 
@@ -91,7 +91,7 @@ async function save(input: ProfileInput) {
   if (input.auth === 'db' && !input.username?.trim()) throw new Failure('Укажите пользователя Superset.');
   if (input.ca && (!input.ca.includes('-----BEGIN CERTIFICATE-----') || /PRIVATE KEY/.test(input.ca))) throw new Failure('Корпоративный CA должен быть сертификатом PEM.');
   const url = profileUrl(input.url);
-  const repo = await git.openRepo(input.repo.trim());
+  const repo = await git.openRepoRoot(input.repo.trim());
   const profile: Profile = { id: old?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
     auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
   let secret: Secret = { credential: '', connections: {} };
@@ -125,7 +125,7 @@ async function save(input: ProfileInput) {
 const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][1] | Promise<Requests[K][1]> } = {
   profiles: listProfiles, save, probe: id => profileFor(id).adapter.probe(),
   async pickDirectory() { return (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0] ?? ''; },
-  async open(path) { const repo = await git.openRepo(path); return { repo, state: await git.gitStatus(repo) }; },
+  async open(path) { const repo = await git.openRepoRoot(path); return { repo, state: await git.gitStatus(repo) }; },
   async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
   fetch: git.fetchRemote, push: git.pushBranch,
@@ -160,17 +160,19 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async validate(input) {
     const source = await sourceSnapshot(input.repo, input.ref, input.folder);
-    return { sha: source.sha, counts: summarize(assertValid(source.files)) };
+    const { files, excluded } = input.compatibleOnly ? compatibleSnapshot(source.files) : { files: source.files, excluded: [] };
+    return { sha: source.sha, counts: summarize(assertValid(files)), excluded };
   },
   async plan(input) {
     preparedImport = undefined;
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
     const { profile, secret, adapter } = profileFor(input.profileId);
-    const expected = await planImport(adapter, profile, source.files, secret.connections);
+    const { files, excluded } = input.compatibleOnly ? compatibleSnapshot(source.files) : { files: source.files, excluded: [] };
+    const expected = await planImport(adapter, profile, files, secret.connections);
     const id = randomUUID();
-    preparedImport = { ...input, ...source, id, expected };
+    preparedImport = { ...input, ...source, files, id, expected };
     const { targetState, connectionState, ...publicPlan } = expected;
-    return { ...publicPlan, id, sha: source.sha };
+    return { ...publicPlan, id, sha: source.sha, excluded };
   },
   async verify(input) {
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);

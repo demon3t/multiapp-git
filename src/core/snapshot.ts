@@ -2,7 +2,6 @@ import { parse, parseDocument } from 'yaml';
 import { Asset, Failure, Files, Inspection, Kind, kinds, list, normalizeUuid, object, Row } from './model';
 
 export const maxBytes = 64 * 1024 * 1024;
-export const maxFiles = 5000;
 const safeSegment = /^[\p{L}\p{N}_ .-]+$/u;
 export function safePath(value: string) {
   return value.length <= 220 && value.split('/').every(part =>
@@ -40,7 +39,7 @@ export function inspect(files: Files): Inspection {
   const byId = new Map<string, Asset>();
   const expected = new Map<Asset, [unknown, Kind, string][]>();
   if (!files.has('metadata.yaml')) issues.push({ path: 'metadata.yaml', message: 'Нет metadata.yaml.' });
-  if (files.size > maxFiles || [...files.values()].reduce((size, text) => size + Buffer.byteLength(text), 0) > maxBytes) {
+  if ([...files.values()].reduce((size, text) => size + Buffer.byteLength(text), 0) > maxBytes) {
     issues.push({ path: '', message: 'Снимок превышает допустимый размер.' });
     return result;
   }
@@ -68,8 +67,8 @@ export function inspect(files: Files): Inspection {
         continue;
       }
       if (byId.has(uuid)) issues.push({ path, message: 'Повторяющийся UUID.' });
-      if (kind === 'databases' && data.sqlalchemy_uri !== placeholder) {
-        issues.push({ path, message: 'В снимке Git допустим только нейтральный URI подключения mGit.' });
+      if (kind === 'databases' && data.sqlalchemy_uri !== placeholder && data.sqlalchemy_uri !== 'REDACTED') {
+        issues.push({ path, message: 'В снимке Git допустимы только очищенные URI подключений.' });
       }
       if (kind === 'datasets' && (!Array.isArray(data.columns) || !Array.isArray(data.metrics))) {
         issues.push({ path, message: 'Нет списка колонок или метрик dataset.' });
@@ -158,6 +157,32 @@ export function assertValid(files: Files) {
   const inspection = inspect(files);
   if (inspection.issues.length) throw new Failure('Проверка снимка обнаружила ошибки.', 'validation', inspection.issues);
   return inspection.assets;
+}
+export function compatibleSnapshot(files: Files) {
+  const { assets, issues } = inspect(files);
+  if (issues.some(issue => !assetPath(issue.path) || issue.path === 'metadata.yaml' || issue.message === 'Повторяющийся UUID.')) {
+    throw new Failure('Снимок содержит ошибки, которые нельзя исключить частичным импортом.', 'validation', issues);
+  }
+  const excluded = new Map(issues.map(issue => [issue.path, issue.message]));
+  const dependents = new Map<string, Asset[]>();
+  const pending = assets.filter(asset => excluded.has(asset.path));
+  for (const asset of assets) {
+    for (const uuid of asset.references) {
+      const references = dependents.get(uuid) ?? [];
+      references.push(asset);
+      dependents.set(uuid, references);
+    }
+  }
+  for (const invalid of pending) {
+    for (const asset of dependents.get(invalid.uuid) ?? []) {
+      if (excluded.has(asset.path)) continue;
+      excluded.set(asset.path, 'Исключена зависимость ' + invalid.uuid + '.');
+      pending.push(asset);
+    }
+  }
+  const compatible = new Map([...files].filter(([path]) => !excluded.has(path)));
+  if (!assertValid(compatible).length) throw new Failure('В снимке нет объектов для частичного импорта.', 'validation', issues);
+  return { files: compatible, excluded: [...excluded].map(([path, message]) => ({ path, message })) };
 }
 export function selectAssets(files: Files, selected: string[]) {
   if (!selected.length) return files;

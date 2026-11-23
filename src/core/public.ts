@@ -1,5 +1,5 @@
 import type { Change } from './git';
-import type { Environment, Profile } from './model';
+import type { Environment, Issue, Profile } from './model';
 import type { UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
@@ -11,7 +11,7 @@ export type Context = { repo: string; folder: string; profileId: string };
 export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
 export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
 export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[] };
-export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[] };
+export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[]; excluded: Issue[] };
 export type Verification = { verified: boolean; checked: number; issues: unknown[] };
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
@@ -29,8 +29,8 @@ export type Requests = {
   exportPreview: [Context & { selected: string[] }, Preview];
   write: [string, GitState];
   commit: [{ id: string; message: string }, GitState];
-  validate: [{ repo: string; folder: string; ref: string }, { sha: string; counts: Record<string, number> }];
-  plan: [Context & { ref: string }, Plan];
+  validate: [{ repo: string; folder: string; ref: string; compatibleOnly?: boolean }, { sha: string; counts: Record<string, number>; excluded: Issue[] }];
+  plan: [Context & { ref: string; compatibleOnly?: boolean }, Plan];
   verify: [Context & { ref: string }, Verification];
   apply: [{ id: string; confirm: string; backup: boolean }, Verification];
   history: [undefined, Entry[]];

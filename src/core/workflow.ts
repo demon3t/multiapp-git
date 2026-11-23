@@ -46,9 +46,11 @@ export async function verifyImport(adapter: Adapter, files: Files) {
   const expected = assertValid(files);
   const observed = inspect(normalizeExport(await adapter.download()));
   const byId = new Map(observed.assets.map(asset => [asset.uuid, asset]));
+  const counts = new Map<string, number>();
+  for (const asset of observed.assets) counts.set(asset.uuid, (counts.get(asset.uuid) ?? 0) + 1);
   const mismatches = expected.flatMap(asset => {
     const actual = byId.get(asset.uuid);
-    const count = observed.assets.filter(item => item.uuid === asset.uuid).length;
+    const count = counts.get(asset.uuid);
     return !actual || actual.kind !== asset.kind || count !== 1 || [...new Set(asset.references)].sort().join() !== [...new Set(actual.references)].sort().join()
       ? [{ path: asset.path, message: !actual ? 'UUID не найден на цели.' : 'На цели отличаются связи, тип или число объектов с UUID.' }] : [];
   });

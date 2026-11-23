@@ -4,7 +4,7 @@ import { join, resolve, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
-import { assetPath, assertValid, maxBytes, maxFiles, safePath } from './snapshot';
+import { assetPath, assertValid, maxBytes, safePath } from './snapshot';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -39,6 +39,12 @@ export function snapshotPath(path: string) {
 export async function openRepo(path: string) {
   const root = (await command(resolve(path), ['rev-parse', '--show-toplevel'])).trimEnd();
   return fs.realpath(root);
+}
+export async function openRepoRoot(path: string) {
+  const selected = await fs.realpath(resolve(path));
+  const root = await openRepo(selected);
+  if (root !== selected) throw new Failure('Выберите корень отдельного Git-репозитория. Выбранная папка находится внутри другого репозитория.', 'git');
+  return root;
 }
 export async function cloneRepo(url: string, folder: string) {
   let remote: URL;
@@ -108,7 +114,6 @@ export async function readCommit(repo: string, sha: string, folder: string): Pro
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(sha)) throw new Failure('Нужен полный commit SHA.');
   const files: Files = new Map();
   const listing = split((await git(repo, ['ls-tree', '-rz', sha, '--', folder])).toString('utf8'));
-  if (listing.length > maxFiles) throw new Failure('Снимок слишком большой.');
   if (!listing.length) return files;
   const entries = listing.map(entry => {
     const tab = entry.indexOf('\t');
@@ -183,7 +188,7 @@ async function readWorktree(path: string, prefix = '', files: Files = new Map(),
       await readWorktree(full, relative + '/', files, size);
       continue;
     }
-    if (!entry.isFile() || !assetPath(relative) || files.size >= maxFiles) throw new Failure('В каталоге снимка есть посторонние файлы. Выберите другой каталог.');
+    if (!entry.isFile() || !assetPath(relative)) throw new Failure('В каталоге снимка есть посторонние файлы. Выберите другой каталог.');
     size.bytes += (await fs.stat(full)).size;
     if (size.bytes > maxBytes) throw new Failure('Снимок слишком большой.');
     files.set(relative, (await fs.readFile(full, 'utf8')).replace(/\r\n/g, '\n'));

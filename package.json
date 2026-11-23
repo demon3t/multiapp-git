@@ -1,6 +1,6 @@
 {
   "name": "mgit",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Version control for application configuration",
   "main": "dist/main.js",
   "scripts": {

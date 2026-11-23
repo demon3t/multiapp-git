@@ -19,6 +19,12 @@ const emptyGit: GitState = { branch: '', status: '', head: '', branches: [] };
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
 }
+function Exclusions({ items }: { items: Plan['excluded'] }) {
+  if (!items.length) return null;
+  return <details className="notice"><summary>Исключено объектов: {items.length}</summary>
+    <div className="asset-list">{items.map(issue => <p key={issue.path}>{issue.path} · {issue.message}</p>)}</div>
+  </details>;
+}
 function Changes({ changes }: { changes: Change[] }) {
   const [index, setIndex] = useState(0);
   const change = changes[index] ?? changes[0];
@@ -58,9 +64,10 @@ function App() {
   const [commitMessage, setCommitMessage] = useState('');
   const [plan, setPlan] = useState<Plan>();
   const [only, setOnly] = useState(false);
+  const [compatibleOnly, setCompatibleOnly] = useState(false);
   const [backup, setBackup] = useState(true);
   const [confirm, setConfirm] = useState('');
-  const [validation, setValidation] = useState<{ sha: string; counts: Record<string, number> }>();
+  const [validation, setValidation] = useState<Requests['validate'][1]>();
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
   const [token, setToken] = useState('');
@@ -118,7 +125,7 @@ function App() {
     if (id !== profileId) {
       setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD');
     }
-    setProfileId(id); setAssets([]); setSelected([]); invalidate();
+    setProfileId(id); setAssets([]); setSelected([]); setCompatibleOnly(false); invalidate();
   }
   function navigate(next: Page) {
     setPage(next); setError(undefined); setMessage('');
@@ -320,17 +327,19 @@ function App() {
       </section>}</>}
       {page === 'Импорт' && <>{contextPanel}<section className="panel"><h2>Предварительная проверка</h2>
         <label className="check"><input type="checkbox" checked={only} onChange={e => { setOnly(e.target.checked); invalidate(); }}/>Только метаданные · локальная проверка</label>
+        <label className="check"><input type="checkbox" checked={compatibleOnly} onChange={e => { setCompatibleOnly(e.target.checked); invalidate(); }}/>Частичный снимок · исключить объекты с ошибками и зависящие от них объекты</label>
         <div className="actions"><button disabled={!repo || !ref.trim()} className={only ? 'primary' : ''}
-          onClick={() => run('validate', { repo, ref, folder }, 'Локальная проверка', result => { setValidation(result); setMessage('Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
+          onClick={() => run('validate', { repo, ref, folder, compatibleOnly }, 'Локальная проверка', result => { setValidation(result); setMessage(result.excluded.length ? 'Совместимая часть прошла локальную проверку.' : 'Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
           {!only && <><button className="primary" disabled={!applicationReady || !ref.trim()} onClick={() => {
-            setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref }, 'Подготовка плана импорта', setPlan);
+            setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref, compatibleOnly }, 'Подготовка плана импорта', setPlan);
           }}>Построить план</button><button disabled={!applicationReady || !ref.trim()} onClick={() => run('verify', { ...context, ref }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
         </div>
-        {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/></>}
+        {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/><Exclusions items={validation.excluded}/></>}
       </section>
       {plan && !only && <section className="panel"><h2>План импорта</h2>
         <p className="hint">{plan.url} · Superset {plan.version}</p><p className="hint mono">{plan.sha}</p>
         <Counts values={plan.counts}/>
+        <Exclusions items={plan.excluded}/>
         <div className="asset-list">{plan.assets.map(asset => <div className="plan-row" key={asset.uuid}><span>{asset.name}</span><span className={'tag ' + asset.action}>{actionNames[asset.action ?? '']}</span><span className="hint">{labels[asset.kind]}</span></div>)}</div>
         <p className="hint">При применении Superset может обращаться к аналитическим подключениям целевого окружения.</p>
         <label className="check"><input type="checkbox" checked={backup} onChange={e => setBackup(e.target.checked)}/>Сохранить резервный экспорт метаданных</label>

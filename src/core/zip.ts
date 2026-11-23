@@ -1,7 +1,7 @@
 import { fromBuffer, Entry } from 'yauzl';
 import { ZipFile } from 'yazl';
 import { Files, Failure } from './model';
-import { assetPath, maxBytes, maxFiles } from './snapshot';
+import { assetPath, maxBytes } from './snapshot';
 
 export function unpack(buffer: Buffer): Promise<Files> {
   return new Promise((resolve, reject) => {
@@ -21,7 +21,7 @@ export function unpack(buffer: Buffer): Promise<Files> {
         root = folder;
         if (entry.fileName.endsWith('/') && !entry.uncompressedSize) { zip.readEntry(); return; }
         size += entry.uncompressedSize;
-        if (!assetPath(path) || seen.has(path.toLowerCase()) || files.size >= maxFiles || size > maxBytes ||
+        if (!assetPath(path) || seen.has(path.toLowerCase()) || size > maxBytes ||
             ((entry.externalFileAttributes >>> 16) & 0xf000) === 0xa000) { fail(); return; }
         seen.add(path.toLowerCase());
         zip.openReadStream(entry, (streamError, stream) => {
@@ -36,7 +36,6 @@ export function unpack(buffer: Buffer): Promise<Files> {
           });
         });
       });
-      if (zip.entryCount > maxFiles * 2) { fail(); return; }
       zip.readEntry();
     });
   });

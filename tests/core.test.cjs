@@ -6,7 +6,7 @@ const { join } = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { createServer } = require('node:http');
 const { fixture, ids, path } = require('./fixture.cjs');
-const { inspect, assertValid, normalizeExport, materialize, selectAssets } = require('../dist/core/snapshot');
+const { inspect, assertValid, compatibleSnapshot, normalizeExport, materialize, selectAssets } = require('../dist/core/snapshot');
 const git = require('../dist/core/git');
 const { Superset } = require('../dist/core/superset');
 
@@ -45,11 +45,30 @@ test('blocks secret fields, unsafe attachments and incompatible versions', () =>
   assert(!normalized.get(path.database).includes('target.local'));
 });
 
+test('accepts large snapshots and lists exclusions for explicit partial import', () => {
+  const files = fixture();
+  files.set(path.database, files.get(path.database).replace('sqlite:///mgit-unconfigured.db', 'REDACTED'));
+  files.set(path.chart, files.get(path.chart).replace(/^dataset_uuid:.*\n/m, ''));
+  const query = files.get(path.query);
+  for (let index = 1; index <= 5_000; index++) {
+    files.set('queries/query-' + index + '.yaml', query.replace(ids.query, 'c2000000-0000-4000-8000-' + String(index).padStart(12, '0')));
+  }
+  assert.throws(() => assertValid(files), { code: 'validation' });
+  const result = compatibleSnapshot(files);
+  assert.deepEqual(new Set(result.excluded.map(item => item.path)), new Set([path.chart, path.dashboard]));
+  assert.equal(result.files.size, 5_004);
+  assert.equal(files.size, 5_006);
+  files.set('secret.txt', 'secret');
+  assert.throws(() => compatibleSnapshot(files), { code: 'validation' });
+});
+
 test('requires clean Git and preserves paths outside snapshot', async t => {
   const repo = await mkdtemp(join(tmpdir(), 'mgit-git-test-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
   const run = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
   run('init', '-b', 'main');
+  await mkdir(join(repo, 'nested'));
+  await assert.rejects(git.openRepoRoot(join(repo, 'nested')), /корень отдельного/);
   run('config', 'user.email', 'test@example.invalid');
   run('config', 'user.name', 'mGit test');
   await writeFile(join(repo, 'README.md'), 'initial');
