@@ -56,6 +56,21 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   }
   for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector("h1")?.textContent') !== 'Приложения'; attempt++) await wait(100);
   assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Приложения');
+  const titleBar = await evaluate(`(() => {
+    const overlay = navigator.windowControlsOverlay;
+    const bar = document.querySelector('.tabbar').getBoundingClientRect();
+    const controls = overlay?.getTitlebarAreaRect();
+    return { visible: overlay?.visible, y: controls?.y, height: controls?.height, barHeight: bar.height, reserved: bar.width - (controls?.width ?? bar.width) };
+  })()`);
+  assert.equal(titleBar.visible, true);
+  assert.equal(titleBar.y, 0);
+  assert.equal(titleBar.height, titleBar.barHeight);
+  assert(titleBar.reserved > 0);
+  await evaluate('document.querySelector(".updates-toggle").click()');
+  assert.match(await evaluate('document.querySelector(".updates-panel")?.textContent'), /Проверить сейчас/);
+  assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'idle');
+  await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
+  assert.equal(await evaluate('!!document.querySelector(".updates-panel")'), false);
   assert.deepEqual(await evaluate('window.mgit.call("profiles")'), { ok: true, data: [] });
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("nav button"), x => x.textContent)'), [
     'Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'

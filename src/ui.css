@@ -63,4 +63,12 @@ input:not([type=checkbox]),select,textarea,.readout{min-height:31px;padding:5px 
 .yaml-comparison pre{margin:0;padding:8px;overflow:auto;max-height:330px;white-space:pre;font-size:12px}
 .statusbar{background:#edf0f4;border-top:1px solid #cdd3dc;padding:0 10px;gap:14px;font-size:11px;color:#485365}
 .branch-status{display:flex;align-items:center;gap:5px}.tree-status{margin-left:auto}
+.tabbar{padding-right:calc(5px + 100% - env(titlebar-area-width, 100%));-webkit-app-region:drag}
+.tabbar button,.app-tabs,.updates-menu{-webkit-app-region:no-drag}
+.title-drag{flex:1;min-width:18px}
+.updates-menu{position:relative;flex:none}
+.updates-toggle{background:transparent;border-color:transparent}
+.updates-panel{position:absolute;right:0;top:calc(100% + 6px);width:335px;z-index:3;padding:14px;background:#fff;border:1px solid #c5cbd4;border-radius:5px;box-shadow:0 6px 20px #24385526}
+.updates-panel p{margin-top:8px;overflow-wrap:anywhere}
+.updates-panel form{margin-top:12px}
 @media(max-width:1000px){.shell{grid-template-columns:176px minmax(0,1fr)}.context{grid-template-columns:repeat(2,minmax(0,1fr))}}

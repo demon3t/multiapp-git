@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, safeStorage } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
@@ -8,15 +8,48 @@ import * as git from './core/git';
 import { Superset } from './core/superset';
 import { assertValid, inspect, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, inventory, planImport, sourceSnapshot, verifyImport } from './core/workflow';
+import { checkRelease, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
-type State = { profiles: Stored[]; history: Entry[] };
+type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; encryptedToken?: string } };
 let state: State;
 let window: BrowserWindow;
 let busy = false;
 let preparedExport: (Context & Awaited<ReturnType<typeof exportSnapshot>> & { id: string; head: string; branch: string; written: boolean }) | undefined;
 let preparedImport: (Context & Awaited<ReturnType<typeof sourceSnapshot>> & { id: string; expected: Awaited<ReturnType<typeof planImport>> }) | undefined;
 const path = () => join(app.getPath('userData'), 'mgit.json');
+let releaseStatus: UpdateStatus = { current: app.getVersion(), status: 'idle' };
+let updateCheck: Promise<ReturnType<typeof updateView>> | undefined;
+let updateTimer: NodeJS.Timeout | undefined;
+const updateView = () => ({ ...releaseStatus, automatic: state.updates?.automatic, hasToken: Boolean(state.updates?.encryptedToken) });
+
+function reportUpdate() {
+  if (window && !window.isDestroyed()) window.webContents.send('mgit:update', updateView());
+  return updateView();
+}
+function scheduleUpdate(delay: number) {
+  clearTimeout(updateTimer);
+  if (state.updates?.automatic) updateTimer = setTimeout(() => void checkUpdate(), delay);
+}
+function checkUpdate() {
+  if (updateCheck) return updateCheck;
+  updateCheck = (async () => {
+    releaseStatus = { current: app.getVersion(), status: 'checking' };
+    reportUpdate();
+    try {
+      const encrypted = state.updates?.encryptedToken;
+      const token = encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '';
+      releaseStatus = await checkRelease(app.getVersion(), token, (url, options) => net.fetch(url, options));
+    } catch {
+      releaseStatus = { current: app.getVersion(), status: 'error', message: 'Не удалось прочитать защищённый токен GitHub. Сохраните его заново.' };
+    }
+    return reportUpdate();
+  })().finally(() => {
+    updateCheck = undefined;
+    scheduleUpdate(24 * 60 * 60 * 1000);
+  });
+  return updateCheck;
+}
 
 async function persist(next: State) {
   const temporary = path() + '.' + randomUUID() + '.tmp';
@@ -157,14 +190,33 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
     preparedImport = undefined;
     return applyImport(adapter, profile, prepared.files, secret.connections, { sha: prepared.sha, confirm: input.confirm, backup, expected: prepared.expected });
   },
-  history: () => state.history
+  history: () => state.history,
+  updateStatus: updateView,
+  checkUpdate,
+  async saveUpdateSettings(input) {
+    if (typeof input.automatic !== 'boolean') throw new Failure('Укажите, включать ли автоматическую проверку.');
+    const token = input.token?.trim();
+    let encryptedToken = input.clearToken ? undefined : state.updates?.encryptedToken;
+    if ((token || input.clearToken) && updateCheck) throw new Failure('Дождитесь завершения проверки перед сменой токена.');
+    if (token) {
+      if (token.length > 512 || !/^[\w-]+$/.test(token)) throw new Failure('Проверьте формат токена GitHub.');
+      if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
+      encryptedToken = safeStorage.encryptString(token).toString('base64');
+    }
+    await persist({ ...state, updates: { automatic: input.automatic, encryptedToken } });
+    if (!updateCheck && (token || input.clearToken)) releaseStatus = { current: app.getVersion(), status: 'idle' };
+    scheduleUpdate(15_000);
+    return reportUpdate();
+  },
+  openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'updateStatus', 'checkUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
   exportPreview: 'Предпросмотр экспорта готов', write: 'Каталог снимка проверен и записан', commit: 'Коммит создан',
-  validate: 'Локальная проверка пройдена', plan: 'План импорта подготовлен', apply: 'Импорт применён и проверен', verify: 'Проверка цели выполнена'
+  validate: 'Локальная проверка пройдена', plan: 'План импорта подготовлен', apply: 'Импорт применён и проверен', verify: 'Проверка цели выполнена',
+  saveUpdateSettings: 'Настройки обновлений сохранены'
 };
 async function log(action: keyof Requests, status: Entry['status'], message: string) {
   if (quiet.has(action)) return;
@@ -198,8 +250,10 @@ else {
       state = { profiles: [], history: [] };
     }
     window = new BrowserWindow({ width: 1270, height: 850, minWidth: 860, minHeight: 590,
-      backgroundColor: '#f5f6fa', autoHideMenuBar: true,
+      backgroundColor: '#f5f6fa', titleBarStyle: 'hidden',
+      titleBarOverlay: { color: '#e5e8ee', symbolColor: '#223148', height: 39 },
       webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
+    window.removeMenu();
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
     ipcMain.handle('mgit', (event, method, input) => {
@@ -207,6 +261,7 @@ else {
       return handle(method, input);
     });
     await window.loadFile(join(__dirname, 'ui', 'index.html'));
+    scheduleUpdate(15_000);
   });
 }
 app.on('window-all-closed', () => app.quit());

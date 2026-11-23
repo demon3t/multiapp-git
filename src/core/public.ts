@@ -1,7 +1,9 @@
 import type { Change } from './git';
 import type { Environment, Profile } from './model';
+import type { UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
+export type UpdateView = UpdateStatus & { automatic?: boolean; hasToken: boolean };
 export type GitState = { branch: string; status: string; head: string; branches: string[] };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
@@ -32,6 +34,13 @@ export type Requests = {
   verify: [Context & { ref: string }, Verification];
   apply: [{ id: string; confirm: string; backup: boolean }, Verification];
   history: [undefined, Entry[]];
+  updateStatus: [undefined, UpdateView];
+  checkUpdate: [undefined, UpdateView];
+  saveUpdateSettings: [{ automatic: boolean; token?: string; clearToken?: boolean }, UpdateView];
+  openReleases: [undefined, void];
 };
 export type Response<T> = { ok: true; data: T } | { ok: false; message: string; code: string; details?: unknown };
-export type Bridge = { call<K extends keyof Requests>(method: K, input: Requests[K][0]): Promise<Response<Requests[K][1]>> };
+export type Bridge = {
+  call<K extends keyof Requests>(method: K, input: Requests[K][0]): Promise<Response<Requests[K][1]>>;
+  onUpdate(listener: (status: UpdateView) => void): () => void;
+};

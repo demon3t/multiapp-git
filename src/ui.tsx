@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests } from './core/public';
+import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 
 declare global { interface Window { mgit: Bridge } }
@@ -62,6 +62,9 @@ function App() {
   const [confirm, setConfirm] = useState('');
   const [validation, setValidation] = useState<{ sha: string; counts: Record<string, number> }>();
   const [history, setHistory] = useState<Entry[]>([]);
+  const [update, setUpdate] = useState<UpdateView>();
+  const [token, setToken] = useState('');
+  const [updateMenu, setUpdateMenu] = useState(false);
   const profile = profiles.find(item => item.id === profileId);
   const context = { repo, folder, profileId };
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
@@ -79,6 +82,23 @@ function App() {
     finally { setBusy(''); }
   }
   useEffect(() => { void run('profiles', undefined, 'Загрузка профилей', data => { setProfiles(data); setProfileId(data[0]?.id ?? ''); }); }, []);
+  useEffect(() => {
+    let active = true;
+    const unsubscribe = window.mgit.onUpdate(setUpdate);
+    void window.mgit.call('updateStatus', undefined).then(result => {
+      if (active && result.ok) setUpdate(result.data);
+    }).catch(() => undefined);
+    return () => { active = false; unsubscribe(); };
+  }, []);
+  useEffect(() => {
+    if (!updateMenu) return;
+    function close(event: PointerEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.updates-menu')) setUpdateMenu(false);
+    }
+    window.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
+  }, [updateMenu]);
   useEffect(() => {
     if (!profile?.repo) return;
     let active = true;
@@ -151,6 +171,41 @@ function App() {
           title={item.url}><Icon index={0}/>{item.name}</button>)}
       </div>
       <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
+      <div className="title-drag"/>
+      <div className="updates-menu">
+        <button className={update?.status === 'available' ? 'primary' : 'updates-toggle'} aria-expanded={updateMenu}
+          onClick={() => setUpdateMenu(!updateMenu)}>
+          {update?.status === 'available' ? 'Доступна ' + update.latest : 'Обновления'} ▾
+        </button>
+        {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
+          <h2>mGit {update?.current}</h2>
+          <p role="status">{update?.message ?? ({
+            idle: 'Проверьте наличие новой версии на GitHub.', checking: 'Проверяем GitHub…',
+            current: 'У вас актуальная версия.', available: 'Доступна версия ' + update?.latest + '.',
+            'no-release': 'В репозитории пока нет опубликованных релизов.', error: 'Проверка не завершилась.'
+          }[update?.status ?? 'idle'])}</p>
+          <div className="actions">
+            <button disabled={!!busy || update?.status === 'checking'} onClick={() => run('checkUpdate', undefined, 'Проверка обновлений', setUpdate)}>Проверить сейчас</button>
+            <button onClick={() => run('openReleases', undefined, 'Открытие GitHub')}>Релизы на GitHub</button>
+          </div>
+          <label className="check"><input type="checkbox" checked={update?.automatic === true} disabled={!!busy} onChange={e =>
+            run('saveUpdateSettings', { automatic: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Проверять автоматически</label>
+          <form onSubmit={e => {
+            e.preventDefault();
+            void run('saveUpdateSettings', { automatic: update?.automatic === true, token }, 'Сохранение токена', result => {
+              setToken(''); setUpdate(result);
+            });
+          }}>
+            <label>GitHub-токен<input type="password" autoComplete="new-password" value={token}
+              placeholder={update?.hasToken ? 'Токен сохранён' : 'Для закрытого репозитория'} onChange={e => setToken(e.target.value)}/></label>
+            <div className="actions">
+              <button type="submit" disabled={!!busy || !token.trim()}>Сохранить токен</button>
+              {update?.hasToken && <button type="button" disabled={!!busy} onClick={() =>
+                run('saveUpdateSettings', { automatic: update.automatic === true, clearToken: true }, 'Удаление токена', setUpdate)}>Удалить токен</button>}
+            </div>
+          </form>
+        </section>}
+      </div>
     </div>
     <div className="toolbar">
       <button disabled={!repo || !!busy} onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>↓ Fetch</button>
