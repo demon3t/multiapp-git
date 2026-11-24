@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { UpdateView } from './core/public';
 import type { UpdateChanges } from './core/updates';
 
-const headings = { New: 'Новое', Improved: 'Улучшения', Fixed: 'Исправления' } as const;
+const headings = { New: ['Новое', '✦'], Improved: ['Улучшения', '↗'], Fixed: ['Исправления', '✓'] } as const;
 
 export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; busy: boolean; onClose: () => void }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -42,17 +42,20 @@ export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; bu
 
   return <dialog ref={dialog} className="update-dialog" aria-labelledby="update-dialog-title"
     onCancel={event => { event.preventDefault(); if (!installing) onClose(); }}>
-    <h2 id="update-dialog-title">Что нового в mGit</h2>
-    <p className="mono">{update.current} → <strong>{update.latest}</strong></p>
+    <p className="update-eyebrow">Что нового</p>
+    <h2 id="update-dialog-title">mGit {update.latest}</h2>
+    <p className="update-versions mono">{update.current} <span aria-hidden="true">→</span> <strong>{update.latest}</strong></p>
     <div className="update-changes" aria-live="polite">
       {!changes && <p className="hint">{notesError ? 'Не удалось загрузить список изменений.' : 'Загружаем список изменений…'}</p>}
       {changes && !Object.values(changes).some(items => items.length) && <p className="hint">Для этой сборки нет новых записей в журнале изменений.</p>}
       {changes && (Object.keys(headings) as (keyof UpdateChanges)[]).map(group => changes[group].length > 0 &&
-        <section key={group}><h3>{headings[group]}</h3><ul>{changes[group].map((item, index) => <li key={index}>{item}</li>)}</ul></section>)}
+        <section key={group}><h3><span aria-hidden="true">{headings[group][1]}</span> {headings[group][0]}</h3>
+          <ul>{changes[group].map((item, index) => <li key={index}>{item}</li>)}</ul>
+        </section>)}
     </div>
     {downloading && <progress max={100} value={update.progress ?? 0} aria-label="Ход загрузки обновления"/>}
     {(installError || update.message) && <p role="alert">{installError || update.message}</p>}
-    <div className="actions">
+    <div className="update-dialog-actions">
       <button onClick={onClose} disabled={installing}>Позже</button>
       <button className="primary" onClick={() => void install()} disabled={busy || starting || downloading || installing}>
         {installing ? 'Установка…' : downloading ? 'Загрузка ' + (update.progress ?? 0) + '%' :

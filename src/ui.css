@@ -23,32 +23,57 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 :focus-visible{outline:2px solid #6754dc;outline-offset:2px}
 @media(max-width:1000px){.shell{grid-template-columns:190px minmax(0,1fr)}.context{grid-template-columns:repeat(2,minmax(0,1fr)) auto}.header-mark{display:none}}
 
-:root{font-family:"Segoe UI",Inter,sans-serif;background:#fff;color:#242c39;font-size:13px}
-.shell{height:100vh;min-height:0;grid-template-columns:210px minmax(0,1fr);grid-template-rows:39px 43px minmax(0,1fr) 26px;overflow:hidden}
+:root{font-family:"Segoe UI",Inter,sans-serif;background:#fff;color:#242c39;font-size:12px}
+.shell{height:100vh;min-height:0;grid-template-columns:196px minmax(0,1fr);grid-template-rows:env(titlebar-area-height, 30px) 31px minmax(0,1fr) 22px;overflow:hidden}
 .tabbar,.toolbar,.statusbar{grid-column:1/-1;display:flex;align-items:center;min-width:0}
 .tabbar{background:#e5e8ee;border-bottom:1px solid #c5cbd4;padding:0 5px;gap:4px}
-.tabbar .brand{display:block;font-size:16px;padding:0 12px;background:transparent;border:0;color:#223148}
+.tabbar .brand{display:grid;place-items:center;width:24px;padding:0;background:transparent;border:0}
 .app-tabs{align-self:stretch;display:flex;align-items:end;min-width:0;overflow:auto;gap:2px}
 .app-tabs button{display:flex;align-items:center;gap:6px;flex:0 0 auto;max-width:260px;overflow:hidden;text-overflow:ellipsis;border-radius:4px 4px 0 0;background:#edf0f5;border-color:#c9cfd9;border-bottom:0}
 .app-tabs button[aria-pressed=true]{background:#fafbfc;color:#15549e;border-top:2px solid #3e86d4}
-.tabbar .new-tab{border:0;background:transparent;font-size:19px;padding:0 7px}
+.toolbar .new-tab{border:0;background:transparent;font-size:15px;padding:0 5px}
+.repo-menu,.app-menu{position:relative;flex:none}
+.repo-menu-trigger{background:transparent;border:0;color:#354253;font-weight:600;padding:3px 6px}
+.repo-menu-panel{position:absolute;z-index:8;left:0;top:calc(100% + 4px);min-width:230px;width:max-content;padding:4px;background:#fff;border:1px solid #c5cbd4;border-radius:5px;box-shadow:0 6px 20px #24385526}
+.menu-command{display:flex;justify-content:space-between;align-items:center;gap:20px;width:100%;text-align:left;background:transparent;border:0;border-radius:3px;padding:5px 7px;color:#26364d}
+.menu-command:hover:not(:disabled){background:#e7eff9;color:#124c8c}
+.menu-command kbd{font:400 11px "Segoe UI",sans-serif;color:#536173}
+.update-commands{margin-top:8px}
+.menu-separator{height:1px;background:#d5dae3;margin:4px 6px}
 .toolbar{background:#fafbfc;border-bottom:1px solid #cbd1db;gap:3px;padding:0 8px}
-.toolbar button{display:flex;align-items:center;gap:5px;background:transparent;border-color:transparent}
+.toolbar .new-tab{display:flex;align-items:center;flex:none}
 .toolbar button:hover:not(:disabled){background:#e7eff9;border-color:#c1d4ea}
-.shell aside{position:static;height:auto;min-height:0;overflow:auto;background:#f1f3f6;color:#303a49;padding:8px 0;border-right:1px solid #ced4de}
+.shell aside{position:static;height:auto;min-height:0;overflow:auto;background:#f1f3f6;color:#303a49;padding:3px 0;border-right:1px solid #ced4de}
 nav{gap:1px}nav button{color:#354253;padding:6px 12px;border-radius:0;font-weight:500}
 nav button:hover,nav .current{color:#124c8c;background:#dce9f9}
-.branches{border-top:1px solid #d4dae3;margin-top:10px;padding-top:9px}
-.branches h2{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#596474;padding:0 12px 5px}
-.branches button{display:flex;align-items:center;gap:8px;width:100%;border:0;border-radius:0;text-align:left;padding:4px 12px;background:transparent;min-height:27px;overflow:hidden}
-.branches button:hover,.branches button.current{background:#e0eafa;color:#19599e}
-.branch-dot{width:8px;height:8px;flex:0 0 8px;border:2px solid #4383ca;border-radius:50%;display:inline-block}
-main{min-height:0;overflow:auto;max-width:none;padding:16px 18px;background:#fbfcfd}
-header{margin-bottom:12px}h1{font-size:22px;letter-spacing:-.3px}h2{font-size:14px}
-.panel,.context{border:1px solid #d5dae3;border-radius:4px;padding:14px;margin-bottom:10px}
+.operation-group{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:2px;padding:2px 4px;border-bottom:1px solid #d4dae3}
+.operation-group.superset-operations{grid-template-columns:repeat(2,minmax(0,1fr))}
+.operation{display:flex;align-items:center;justify-content:center;gap:3px;min-height:24px;padding:2px 1px;border:1px solid transparent;border-radius:4px;background:transparent;color:#354253;font-size:9px;font-weight:700}
+.operation svg{flex:none}
+.operation:hover:not(:disabled){background:#dce9f9;border-color:#b6cee9;color:#124c8c}
+.operation:disabled{opacity:.4}
+.toolbar-repo{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%;font-weight:600}
+.toolbar-branch{font-family:Consolas,monospace;color:#536173}
+.branches{padding:3px 4px}
+.branches ul{list-style:none;margin:0;padding-left:8px}
+.branches summary{cursor:pointer;padding:3px 4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.branch-group>summary{font-weight:650;color:#435269}
+.branch-group+.branch-group{border-top:1px solid #d4dae3}
+.branch-empty{padding:2px 8px 5px;color:#596474}
+.branches .branch-ref{display:flex;align-items:center;gap:5px;width:100%;border:0;border-radius:3px;text-align:left;padding:2px 4px;background:transparent;min-height:20px;font-weight:400}
+.branch-ref span:last-child{overflow:hidden;text-overflow:ellipsis}
+.branches summary:hover,.branch-ref:hover,.branch-ref[aria-current=true]{background:#e0eafa;color:#19599e}
+.branch-dot{width:6px;height:6px;flex:0 0 6px;border:1px solid #4383ca;border-radius:50%;display:inline-block}
+main{min-height:0;overflow:auto;max-width:none;padding:10px 12px;background:#fbfcfd}
+header{margin-bottom:8px}h1{font-size:19px;letter-spacing:-.3px}h2{font-size:13px}
+.panel,.context{border:1px solid #d5dae3;border-radius:4px;padding:9px;margin-bottom:7px}
 .context{grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
-button{border-radius:4px;min-height:29px;padding:5px 9px}.primary{background:#216ac0;border-color:#216ac0}
-input:not([type=checkbox]),select,textarea,.readout{min-height:31px;padding:5px 8px;border-radius:4px}
+button{border-radius:4px;min-height:23px;padding:3px 7px}.primary{background:#216ac0;border-color:#216ac0}
+input:not([type=checkbox]),select,textarea,.readout{min-height:25px;padding:3px 6px;border-radius:4px}
+label{gap:4px;font-size:12px}.form-grid{gap:9px;margin-top:8px}.actions{gap:5px;margin-top:8px}
+.section-title{margin-bottom:8px}.check{margin-top:7px}.check input{width:13px;height:13px}
+.hint{font-size:12px;margin-top:6px}.notice,.error{padding:7px 9px;margin-bottom:8px}
+.profile-row{padding:5px;gap:6px}.profile-select span{font-size:11px}
 .path-input{display:flex;gap:5px}.path-input input{flex:1}.advanced{margin-top:13px}.advanced summary{cursor:pointer;color:#235b98}
 .profile-row,.counts>div,.notice,.error,.diff-files,.diff-bodies{border-radius:4px}
 .profile-row.selected,.diff-files .active{background:#eaf3ff;border-color:#9cbfe7}
@@ -64,20 +89,79 @@ input:not([type=checkbox]),select,textarea,.readout{min-height:31px;padding:5px 
 .statusbar{background:#edf0f4;border-top:1px solid #cdd3dc;padding:0 10px;gap:14px;font-size:11px;color:#485365}
 .branch-status{display:flex;align-items:center;gap:5px}.tree-status{margin-left:auto}
 .tabbar{padding-right:calc(5px + 100% - env(titlebar-area-width, 100%));-webkit-app-region:drag}
-.tabbar button,.app-tabs,.updates-menu{-webkit-app-region:no-drag}
+.tabbar button,.app-tabs,.updates-menu,.repo-menu,.app-menu{-webkit-app-region:no-drag}
 .title-drag{flex:1;min-width:18px}
-.updates-menu{position:relative;flex:none}
+.updates-menu{position:relative;flex:none;display:flex;gap:3px}
 .updates-toggle{background:transparent;border-color:transparent}
+.update-icon-button{position:relative;width:29px;height:25px;padding:0;display:grid;place-items:center;border:0;border-radius:5px;color:#44526a;font-size:18px;line-height:1}
+.update-icon-button:hover,.update-icon-button[aria-expanded=true]{background:#d5e3f4;color:#124c8c}
+.update-icon-button.update-available{color:#15549e;background:#d5e3f4}
+.update-icon-button.update-available{width:auto;min-width:29px;padding:0 7px;display:flex;justify-content:center}
+.update-icon-button .update-label{max-width:0;opacity:0;overflow:hidden;font-size:11px;font-weight:650}
+.update-available:is(:hover,:focus-visible,[data-active=true]) .update-label{max-width:120px;opacity:1;margin-left:5px}
+.tabbar button[aria-expanded]:hover:not(:disabled),
+.tabbar button[aria-expanded=true]{background:#d5e3f4;color:#124c8c;filter:none}
 .updates-panel{position:absolute;right:0;top:calc(100% + 6px);width:335px;z-index:3;padding:14px;background:#fff;border:1px solid #c5cbd4;border-radius:5px;box-shadow:0 6px 20px #24385526}
 .updates-panel p{margin-top:8px;overflow-wrap:anywhere}
 .updates-panel form{margin-top:12px}
-.update-dialog{box-sizing:border-box;width:min(540px,calc(100vw - 40px));max-height:calc(100vh - 70px);padding:20px;border:1px solid #c5cbd4;border-radius:8px;color:#223148;box-shadow:0 10px 42px #24385540}
+.update-dialog{box-sizing:border-box;width:min(500px,calc(100vw - 40px));max-height:calc(100vh - 70px);padding:22px;border:1px solid #c5cbd4;border-radius:10px;color:#223148;box-shadow:0 10px 42px #24385540}
 .update-dialog::backdrop{background:#202c4060}
-.update-dialog h2{font-size:19px;margin:0 0 8px}
-.update-dialog .actions{justify-content:flex-end}
-.update-changes{max-height:42vh;overflow:auto;margin:12px 0}
-.update-changes h3{font-size:13px;margin:10px 0 5px}
+.update-eyebrow{margin:0 0 7px;color:#6d61bf;font-size:10px;font-weight:750;letter-spacing:1.2px}
+.update-dialog h2{font-size:20px;line-height:1.2;margin:0 0 6px}
+.update-versions{color:#667189;font-size:12px}
+.update-versions strong{color:#283d60}
+.update-changes{max-height:42vh;overflow:auto;margin:16px 0}
+.update-changes section{padding:9px 11px;border:1px solid #e1e5ee;border-radius:7px;margin-top:7px;background:#fbfcfe}
+.update-changes h3{font-size:13px;margin:0 0 5px;color:#34476a}
 .update-changes ul{padding-left:22px;margin:0}
 .update-changes li+li{margin-top:4px}
-.update-dialog progress{width:100%}
+.update-dialog progress{width:100%;margin:10px 0}
+.update-dialog-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}
+.repo-views{padding-bottom:4px;margin-bottom:4px;border-bottom:1px solid #d4dae3}
+.repo-views button{display:block;width:100%;text-align:left;background:transparent;border:0}
+.repo-views button:hover,.repo-views button[aria-pressed=true]{background:#e0eafa;color:#19599e}
+.history-page{padding:0;display:flex;flex-direction:column;overflow:hidden}
+.history-page>fieldset{flex:1;min-height:0;display:flex;flex-direction:column}
+.history-page>.notice,.history-page>.error{margin:6px 8px}
+.git-history{flex:1;min-height:0;display:grid;grid-template-rows:auto minmax(110px,1.15fr) minmax(140px,1fr);background:#fff}
+.git-history-heading{padding:8px 12px;border-bottom:1px solid #d5dae3}
+.git-history-heading h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.commit-list{overflow:auto}
+.commit-grid{display:grid;grid-template-columns:auto minmax(120px,1fr) minmax(85px,12%) 74px minmax(108px,13%);align-items:center;gap:8px;text-align:left}
+.commit-table-head{position:sticky;top:0;z-index:1;height:24px;background:#edf1f6;color:#526078;font-weight:650;border-bottom:1px solid #d5dae3}
+.commit-table-head span:first-child{padding-left:8px}
+.commit-row{width:100%;height:27px;padding:0;border:0;border-radius:0;font-weight:400}
+.commit-row:nth-child(odd){background:#f6f8fb}
+.commit-row:hover:not(:disabled),.commit-row[aria-pressed=true]{background:#e2edfb;filter:none}
+.commit-row:focus-visible{outline-offset:-2px}
+.commit-row canvas{display:block}
+.commit-subject{display:flex;align-items:center;gap:4px;overflow:hidden;min-width:0}
+.commit-title,.commit-author,.commit-date{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.commit-ref{padding:1px 4px;max-width:36%;flex:none;overflow:hidden;text-overflow:ellipsis;border-radius:3px;background:#e3eaf4;color:#344d6e;font-size:10px;font-weight:650}
+.commit-ref-head{background:#cce7fc;color:#1b5182}
+.commit-ref-tag{background:#f6e9cd;color:#77541b}
+.history-feedback{margin:0;padding:8px 10px;color:#526078}
+.history-more{margin:6px 8px}
+.commit-details{display:flex;flex-direction:column;min-height:0;border-top:3px solid #cbd4e1}
+.commit-tabs{display:flex;align-items:center;gap:4px;padding:3px 8px;background:#f1f4f8;border-bottom:1px solid #d5dae3}
+.commit-tabs button{background:transparent;border-color:transparent}
+.commit-tabs button[aria-pressed=true]{background:#fff;border-color:#cbd4e1;color:#15549e}
+.commit-tabs>span{margin-left:auto;color:#526078}
+.commit-changes{display:grid;grid-template-columns:minmax(145px,25%) minmax(0,1fr);flex:1;min-height:0}
+.commit-files{overflow:auto;border-right:1px solid #d5dae3}
+.commit-files button{display:flex;align-items:center;gap:5px;width:100%;border:0;border-radius:0;text-align:left;font-weight:400}
+.commit-files button[aria-pressed=true]{background:#e2edfb}
+.commit-files button span:last-child{overflow:hidden;text-overflow:ellipsis}
+.file-status{color:#235a92;font-weight:700}
+.file-status-A{color:#237245}.file-status-D{color:#a12e44}
+.commit-patch{min-width:0;min-height:0;display:flex;flex-direction:column}
+.patch-heading{display:flex;justify-content:space-between;gap:8px;padding:5px 9px;border-bottom:1px solid #e2e7ef}
+.patch-heading span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.patch-heading small{color:#526078;white-space:nowrap}
+.commit-patch pre,.commit-info{overflow:auto;margin:0;padding:6px 8px}
+.commit-patch pre{font-size:11px;white-space:pre;line-height:1.55}
+.commit-patch pre span{display:block;width:max-content;min-width:100%;padding:0 3px}
+.patch-added{background:#dcf3e5;color:#205f3b}.patch-removed{background:#fbe1e5;color:#8e293b}.patch-hunk{background:#e7f0fb;color:#2e5d91}
+.commit-info dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:3px 0 10px}
+.commit-info dd{margin:0;overflow-wrap:anywhere}
 @media(max-width:1000px){.shell{grid-template-columns:176px minmax(0,1fr)}.context{grid-template-columns:repeat(2,minmax(0,1fr))}}

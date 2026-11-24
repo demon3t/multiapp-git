@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
-const { mkdir, mkdtemp, readFile, realpath, rm } = require('node:fs/promises');
+const { mkdir, mkdtemp, readFile, realpath, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { once } = require('node:events');
@@ -12,6 +12,25 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   const repo = join(profile, 'repo');
   await mkdir(repo);
   execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'pipe' });
+  const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
+  git('config', 'user.name', 'mGit test');
+  git('config', 'user.email', 'test@example.invalid');
+  await writeFile(join(repo, 'README.md'), '# Superset configuration\n');
+  git('add', 'README.md');
+  git('commit', '-m', 'Initialize the configuration repository');
+  git('switch', '-c', 'feature/ui/compact');
+  await mkdir(join(repo, 'snapshots'));
+  await writeFile(join(repo, 'snapshots', 'metadata.yaml'), 'type: assets\nversion: 1.0.0\n');
+  git('add', 'snapshots');
+  git('commit', '-m', 'Add the Superset snapshot');
+  git('switch', 'main');
+  await writeFile(join(repo, 'README.md'), '# Superset configuration\n\nLocal snapshots are versioned in Git.\n');
+  git('commit', '-am', 'Document the local snapshot workflow');
+  git('merge', '--no-ff', 'feature/ui/compact', '-m', 'Merge the Superset snapshot');
+  git('tag', 'v1.0.0');
+  git('update-ref', 'refs/remotes/origin/main', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/feature/ui/compact', 'feature/ui/compact');
+  git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   const app = spawn(resolve('release/win-unpacked/mGit.exe'), [
     '--user-data-dir=' + profile, '--remote-debugging-port=0'
   ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
@@ -54,6 +73,9 @@ test('packaged mGit adds a Superset application with its Git repository', { time
       socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
     });
   }
+  function shortcut(code, shiftKey = false) {
+    return evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({ code, ctrlKey: true, shiftKey, cancelable: true })}))`);
+  }
   for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector("h1")?.textContent') !== 'Приложения'; attempt++) await wait(100);
   assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Приложения');
   const titleBar = await evaluate(`(() => {
@@ -77,10 +99,35 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'idle');
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
   assert.equal(await evaluate('!!document.querySelector(".updates-panel")'), false);
+  assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Обновления');
   assert.deepEqual(await evaluate('window.mgit.call("profiles")'), { ok: true, data: [] });
-  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("nav button"), x => x.textContent)'), [
-    'Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
+    'PULL', 'FETCH', 'PUSH'
   ]);
+  await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Файл")).click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".repo-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd").textContent])'), [
+    ['Инициализировать репозиторий', 'Ctrl+Shift+N'], ['Открыть репозиторий', 'Ctrl+O'], ['Клонировать репозиторий', 'Ctrl+Shift+O']
+  ]);
+  assert.equal(await shortcut('KeyO', true), false);
+  assert.equal(await evaluate('document.querySelector("main .panel h2")?.textContent'), 'Клонировать репозиторий');
+  assert.equal(await evaluate('!!document.querySelector(".repo-menu-panel")'), false);
+  await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Приложение")).click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".app-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd").textContent])'),
+    [['История операций', 'Ctrl+H'], ['Настройки', 'Ctrl+,']]);
+  assert.equal(await evaluate('document.querySelector(".app-menu-panel [role=separator]")?.className'), 'menu-separator');
+  await evaluate('document.querySelector(".app-menu-panel button:first-child").click()');
+  assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'История операций');
+  for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".app-menu button").disabled'); attempt++) await wait(100);
+  await evaluate('document.querySelector(".app-menu button").click()');
+  assert.equal(await shortcut('Comma'), false);
+  assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Настройки');
+  await evaluate('document.querySelector(".brand").click()');
+  const initialized = await evaluate('window.mgit.call("init", ' + JSON.stringify(join(profile, 'initialized')) + ')');
+  assert.equal(initialized.ok, true, JSON.stringify(initialized));
+  assert.equal(initialized.data.state.branch, 'main');
+  assert.equal(initialized.data.state.head, '');
+  assert.deepEqual(await evaluate('window.mgit.call("open", ' + JSON.stringify(initialized.data.repo) + ')'), initialized);
+  assert.equal(await evaluate('document.querySelectorAll("nav button").length'), 0);
   await evaluate('document.querySelector(".new-tab").click()');
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector("form")')); attempt++) await wait(100);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("form label"), x => x.firstChild.textContent)'), ['Тип приложения', 'Папка Git']);
@@ -122,29 +169,31 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert(!stored.includes('assert-dpapi-credential'));
   assert(!stored.includes('assert-dpapi-uri'));
 
-  const rightway = process.env.MGIT_RIGHTWAY_REPO;
-  if (rightway) {
-    await evaluate('document.querySelectorAll("nav button")[1].click()');
-    await evaluate(`(() => {
-      const field = document.querySelector('main input');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(rightway)});
-      field.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`);
-    await evaluate('Array.from(document.querySelectorAll("main button")).find(button => button.textContent === "Открыть").click()');
-    for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".branch-status")?.textContent') !== 'test'; attempt++) await wait(100);
-    assert.equal(await evaluate('document.querySelector(".branch-status")?.textContent'), 'test');
-    await evaluate('Array.from(document.querySelectorAll(".toolbar button")).find(button => button.textContent === "Импорт").click()');
-    for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector("input[list=snapshot-folders]")?.value') !== 'snapshots/test/assets'; attempt++) await wait(100);
-    assert.equal(await evaluate('document.querySelector("input[list=snapshot-folders]")?.value'), 'snapshots/test/assets');
-    await evaluate(`(() => {
-      const options = document.querySelectorAll('main input[type=checkbox]');
-      options[0].click();
-      options[1].click();
-      Array.from(document.querySelectorAll('main button')).find(button => button.textContent === 'Проверить снимок').click();
-    })()`);
-    for (let attempt = 0; attempt < 240 && !(await evaluate('!!document.querySelector("main .counts, [role=alert]")')); attempt++) await wait(100);
-    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("main .counts strong"), item => Number(item.textContent))'),
-      [2, 1053, 4094, 113, 1]);
-    assert.match(await evaluate('document.querySelector("main details summary")?.textContent'), /182/);
-  }
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'),
+    ['PULL', 'FETCH', 'PUSH', 'EXPORT', 'IMPORT']);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group > summary"), item => item.textContent)'),
+    ['Локальные ветки', 'Удалённые ветки', 'Теги']);
+  assert.equal(await evaluate('document.querySelectorAll(".branch-group")[1].open'), false);
+  await evaluate('document.querySelectorAll(".branch-group > summary")[1].click()');
+  assert.equal(await evaluate('document.querySelectorAll(".branch-group")[1].open'), true);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll(":scope ul details > summary"), item => item.textContent)'),
+    ['origin', 'feature', 'ui']);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll("button"), item => item.textContent)'),
+    ['compact', 'main']);
+  await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
+  const rowCount = 'document.querySelectorAll(".commit-row").length';
+  for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 2; attempt++) await wait(100);
+  assert.equal(await evaluate(rowCount), 2);
+  await evaluate('document.querySelector(".repo-views button:last-child").click()');
+  for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 4; attempt++) await wait(100);
+  assert.equal(await evaluate(rowCount), 4);
+  assert.match(await evaluate('document.querySelector(".commit-row").textContent'), /v1\.0\.0.*Merge the Superset snapshot/);
+  for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector(".commit-patch .patch-added")')); attempt++) await wait(100);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".commit-files button"), button => button.title)'), ['snapshots/metadata.yaml']);
+  assert.match(await evaluate('document.querySelector(".commit-patch pre")?.textContent'), /\+type: assets/);
+  assert(await evaluate('(() => { const lines = document.querySelectorAll(".commit-patch pre span"); return lines[1].offsetTop > lines[0].offsetTop; })()'));
+  await evaluate('document.querySelector(".commit-tabs button:first-child").click()');
+  assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
+  await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
+  assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
 });

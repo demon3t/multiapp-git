@@ -3,21 +3,43 @@ import { createRoot } from 'react-dom/client';
 import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
+import { BranchList } from './branch-list';
+import { GitHistory } from './git-history';
 
 declare global { interface Window { mgit: Bridge } }
-const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
+const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История Git', 'История операций', 'Настройки'] as const;
 type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
 const repositoryName = (path: string) => path.split(/[\\/]/).at(-1);
 const icons = ['M3 5h18v5H3z M3 14h18v5H3z M7 7.5h1 M7 16.5h1', 'M5 3h13v17H5z M5 16h13 M8 7h7 M8 10h5', 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6', 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6', 'M3 12a9 9 0 1 0 3-7 M3 4v5h5 M12 7v5l3 2', 'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2'];
+const operationIcons = {
+  pull: 'M5 5h14 M5 5l4-4 M5 5l4 4 M19 19H5 M19 19l-4-4 M19 19l-4 4',
+  fetch: 'M12 3v14 M7 13l5 5 5-5 M4 20h16',
+  push: 'M12 21V7 M7 11l5-5 5 5 M4 3h16',
+  export: 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6',
+  import: 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6'
+} as const;
 function Icon({ index }: { index: number }) {
-  return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
+}
+function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={operationIcons[name]}/></svg>;
 }
 
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
-const emptyGit: GitState = { branch: '', status: '', head: '', branches: [] };
+const emptyGit: GitState = { branch: '', status: '', head: '', localBranches: [], remoteBranches: [], tags: [] };
 const defaultFolder = 'snapshots/superset/assets';
+type MenuCommand = {
+  label: string; shortcut: string; code: string; ctrl?: boolean; shift?: boolean;
+  disabled?: boolean; run: () => void;
+};
+function CommandButton({ command }: { command: MenuCommand }) {
+  return <button type="button" className="menu-command" disabled={command.disabled}
+    aria-keyshortcuts={command.shortcut.replace('Ctrl', 'Control')} onClick={command.run}>
+    <span>{command.label}</span><kbd aria-hidden="true">{command.shortcut}</kbd>
+  </button>;
+}
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
 }
@@ -48,7 +70,9 @@ function App() {
   const [profileId, setProfileId] = useState('');
   const [editor, setEditor] = useState<ProfileInput>({ ...emptyProfile });
   const [repo, setRepo] = useState('');
+  const [openedRepos, setOpenedRepos] = useState<string[]>([]);
   const [repoInput, setRepoInput] = useState('');
+  const [cloning, setCloning] = useState(false);
   const [remote, setRemote] = useState('');
   const [git, setGit] = useState(emptyGit);
   const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
@@ -56,6 +80,7 @@ function App() {
   const [folderInput, setFolderInput] = useState<string>();
   const [snapshotFolders, setSnapshotFolders] = useState<{ repo: string; ref: string; head: string; paths: string[] }>();
   const [ref, setRef] = useState('HEAD');
+  const [historyRef, setHistoryRef] = useState<string>();
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState<{ message: string; details?: unknown }>();
@@ -76,6 +101,8 @@ function App() {
   const [token, setToken] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
+  const [repoMenu, setRepoMenu] = useState(false);
+  const [appMenu, setAppMenu] = useState(false);
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -85,13 +112,13 @@ function App() {
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
 
   async function run<K extends keyof Requests>(
-    method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void
+    method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void | Promise<void>
   ) {
     if (busy) return;
     setBusy(title); setError(undefined); setMessage('');
     try {
       const result = await window.mgit.call(method, input);
-      if (result.ok) complete?.(result.data);
+      if (result.ok) await complete?.(result.data);
       else setError({ message: result.message, details: result.details });
     } catch { setError({ message: 'Связь с процессом mGit прервалась.' }); }
     finally { setBusy(''); }
@@ -115,6 +142,16 @@ function App() {
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
   }, [updateMenu]);
   useEffect(() => {
+    if (!repoMenu && !appMenu) return;
+    function close(event: PointerEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.repo-menu, .app-menu')) {
+        setRepoMenu(false); setAppMenu(false);
+      }
+    }
+    window.addEventListener('pointerdown', close); window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
+  }, [repoMenu, appMenu]);
+  useEffect(() => {
     if (!profile?.repo) return;
     let active = true;
     const path = profile.repo;
@@ -135,9 +172,10 @@ function App() {
       if (active) setSnapshotFolders({ repo, ref: folderRef, head: git.head, paths: result.ok ? result.data : [] });
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [repo, git.head, git.branches, folderRef]);
+  }, [repo, git, folderRef]);
   function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
   function chooseProfile(id: string) {
+    setHistoryRef(undefined);
     if (id !== profileId) {
       setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD'); setFolderInput(undefined);
     }
@@ -163,8 +201,25 @@ function App() {
     });
   }
   function setOpened(result: { repo: string; state: GitState }) {
-    if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); }
+    if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); setHistoryRef(undefined); }
+    const linkedProfile = profiles.find(item => item.repo === result.repo);
+    if (linkedProfile && !profiles.some(item => item.id === profileId && item.repo === result.repo)) {
+      setProfileId(linkedProfile.id);
+      setAssets([]); setSelected([]); setCompatibleOnly(false);
+    }
+    setOpenedRepos(paths => paths.includes(result.repo) ? paths : [...paths, result.repo]);
+    setCloning(false);
     setRepo(result.repo); setRepoInput(result.repo); setGit(result.state); setGitDiff(undefined); invalidate(); setMessage('Репозиторий открыт.');
+  }
+  function openDirectory(method: 'init' | 'open') {
+    setRepoMenu(false);
+    void run('pickDirectory', undefined, 'Выбор каталога Git', async path => {
+      if (!path) return;
+      await run(method, path, method === 'init' ? 'Инициализация репозитория' : 'Открытие репозитория', result => {
+        navigate('История Git');
+        setOpened(result);
+      });
+    });
   }
   function selectApplication(application: ProfileSummary) {
     chooseProfile(application.id);
@@ -173,10 +228,51 @@ function App() {
     }
   }
   function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
+  function showGitHistory(value?: string) {
+    setHistoryRef(value);
+    if (value) { setRef(value); invalidate(); }
+    navigate('История Git');
+  }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
   }
+
+  const commands = {
+    init: { label: 'Инициализировать репозиторий', shortcut: 'Ctrl+Shift+N', code: 'KeyN', ctrl: true, shift: true,
+      run: () => openDirectory('init') },
+    open: { label: 'Открыть репозиторий', shortcut: 'Ctrl+O', code: 'KeyO', ctrl: true,
+      run: () => openDirectory('open') },
+    clone: { label: 'Клонировать репозиторий', shortcut: 'Ctrl+Shift+O', code: 'KeyO', ctrl: true, shift: true,
+      run: () => { setRepoMenu(false); setRepoInput(''); setRemote(''); setCloning(true); navigate('Репозитории'); } },
+    history: { label: 'История операций', shortcut: 'Ctrl+H', code: 'KeyH', ctrl: true,
+      run: () => { setAppMenu(false); navigate('История операций'); } },
+    settings: { label: 'Настройки', shortcut: 'Ctrl+,', code: 'Comma', ctrl: true,
+      run: () => { setAppMenu(false); editApplication(profile); } },
+    checkUpdate: { label: 'Проверить сейчас', shortcut: 'Ctrl+Shift+U', code: 'KeyU', ctrl: true, shift: true,
+      disabled: update?.status === 'checking',
+      run: () => { setUpdateMenu(true); void run('checkUpdate', undefined, 'Проверка обновлений', setUpdate); } },
+    updateNotes: { label: 'Что нового', shortcut: 'Shift+F1', code: 'F1', shift: true, disabled: !updateAvailable,
+      run: () => { setUpdateMenu(false); setUpdateDialog(true); } },
+    releases: { label: 'Релизы на GitHub', shortcut: 'F1', code: 'F1',
+      run: () => { void run('openReleases', undefined, 'Открытие GitHub'); } }
+  } satisfies Record<string, MenuCommand>;
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.metaKey) return;
+      const command = (Object.values(commands) as MenuCommand[]).find(item =>
+        item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
+      if (!command) return;
+      event.preventDefault();
+      if (event.repeat || busy || updateDialog || command.disabled) return;
+      setRepoMenu(false);
+      setAppMenu(false);
+      command.run();
+    }
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  });
 
   const contextPanel = <div className="context">
     <label>Superset<div className="readout" title={profile?.url}>{profile?.url || 'Выберите приложение'}</div></label>
@@ -184,28 +280,47 @@ function App() {
     <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
       {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
     <label>Каталог снимка<input value={folder} list="snapshot-folders" onChange={e => { setFolderInput(e.target.value); invalidate(); }}/></label>
-    <datalist id="refs">{git.branches.map(name => <option key={name} value={name}/>)}</datalist>
+    <datalist id="refs">{[...new Set([...git.localBranches, ...git.remoteBranches, ...git.tags])].map(name => <option key={name} value={name}/>)}</datalist>
     <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
   </div>;
 
   return <div className="shell">
     <div className="tabbar">
-      <button className="brand" onClick={() => navigate('Приложения')} disabled={!!busy}><strong>mGit</strong></button>
-      <div className="app-tabs" aria-label="Открытые приложения">
-        {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId}
-          disabled={!!busy} onClick={() => { selectApplication(item); if (page === 'Настройки') navigate('Приложения'); }}
-          title={item.url}><Icon index={0}/>{item.name}</button>)}
+      <button className="brand" aria-label="Приложения" onClick={() => navigate('Приложения')} disabled={!!busy}>
+        <img src="./icon.png" width="16" height="16" alt=""/>
+      </button>
+      <div className="repo-menu">
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => { setAppMenu(false); setRepoMenu(!repoMenu); }}>Файл</button>
+        {repoMenu && <div className="repo-menu-panel">
+          <CommandButton command={commands.init}/>
+          <CommandButton command={commands.open}/>
+          <CommandButton command={commands.clone}/>
+        </div>}
       </div>
-      <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
+      <div className="app-menu">
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={appMenu} onClick={() => { setRepoMenu(false); setAppMenu(!appMenu); }}>Приложение</button>
+        {appMenu && <div className="repo-menu-panel app-menu-panel">
+          <CommandButton command={commands.history}/>
+          <div className="menu-separator" role="separator"/>
+          <CommandButton command={commands.settings}/>
+        </div>}
+      </div>
       <div className="title-drag"/>
       <div className="updates-menu">
-        {updateAvailable && <button className="primary" onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>
-          {update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' :
-            update?.status === 'ready' ? 'Обновление готово' : update?.status === 'installing' ? 'Установка…' : 'Обновить'}
+        {updateAvailable && <button className="update-icon-button update-available"
+          data-active={update?.status === 'downloading' || update?.status === 'installing'}
+          aria-label={'Доступно обновление ' + update?.latest}
+          title={update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' : 'Доступно обновление ' + update?.latest}
+          aria-haspopup="dialog" disabled={update?.status === 'installing'} onClick={commands.updateNotes.run}>
+          <OperationIcon name="import"/>
+          <span className="update-label" aria-hidden="true">
+            {update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' :
+              update?.status === 'installing' ? 'Установка…' : 'Обновить'}
+          </span>
         </button>}
-        <button className="updates-toggle" aria-expanded={updateMenu}
-          onClick={() => setUpdateMenu(!updateMenu)}>
-          Обновления ▾
+        <button className="updates-toggle update-icon-button" aria-label="Обновления" title="Обновления"
+          onClick={() => setUpdateMenu(!updateMenu)} aria-expanded={updateMenu}>
+          <span className="update-icon" aria-hidden="true">↻</span>
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
           <h2>mGit {update?.current}</h2>
@@ -216,10 +331,10 @@ function App() {
             ready: 'Обновление ' + update?.latest + ' готово к установке.', installing: 'Запускаем установщик…',
             'no-release': 'В репозитории пока нет опубликованных релизов.', error: 'Проверка не завершилась.'
           }[update?.status ?? 'idle'])}</p>
-          <div className="actions">
-            <button disabled={!!busy || update?.status === 'checking'} onClick={() => run('checkUpdate', undefined, 'Проверка обновлений', setUpdate)}>Проверить сейчас</button>
-            {updateAvailable && <button onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>Что нового</button>}
-            <button onClick={() => run('openReleases', undefined, 'Открытие GitHub')}>Релизы на GitHub</button>
+          <div className="update-commands">
+            <CommandButton command={{ ...commands.checkUpdate, disabled: !!busy || commands.checkUpdate.disabled }}/>
+            {updateAvailable && <CommandButton command={commands.updateNotes}/>}
+            <CommandButton command={{ ...commands.releases, disabled: !!busy }}/>
           </div>
           <label className="check"><input type="checkbox" checked={update?.automatic === true} disabled={!!busy} onChange={e =>
             run('saveUpdateSettings', { automatic: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Проверять автоматически</label>
@@ -256,30 +371,54 @@ function App() {
     </div>
     {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
     <div className="toolbar">
-      <button disabled={!repo || !!busy} onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>↓ Fetch</button>
-      <button disabled={!repo || !git.head || !git.branch || !!busy} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>↑ Push</button>
-      <button disabled={!repo || !!busy} onClick={() => run('status', repo, 'Получение статуса', setGit)}>↻ Обновить</button>
-      <button disabled={!applicationReady || !!busy} onClick={() => navigate('Экспорт')}><Icon index={2}/>Экспорт</button>
-      <button disabled={!repo || !!busy} onClick={() => navigate('Импорт')}><Icon index={3}/>Импорт</button>
+      <div className="app-tabs" aria-label="Подключённые репозитории">
+        {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId && applicationReady}
+          disabled={!!busy} onClick={() => { selectApplication(item); navigate(item.repo ? 'История Git' : 'Приложения'); }}
+          title={item.repo || item.url}><Icon index={0}/>{item.name}</button>)}
+        {openedRepos.filter(path => !profiles.some(item => item.repo === path)).map(path =>
+          <button key={path} aria-pressed={path === repo} disabled={!!busy} title={path}
+            onClick={() => { setCloning(false); showGitHistory(); if (path !== repo) void run('open', path, 'Открытие репозитория', setOpened); }}>
+            <Icon index={1}/>{repositoryName(path)}
+          </button>)}
+      </div>
+      <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
     </div>
     <aside>
-      <nav aria-label="Разделы">{pages.map((name, index) => <button disabled={!!busy} className={page === name ? 'current' : ''} key={name} onClick={() => navigate(name)}>
-        <Icon index={index}/><span>{name}</span>
-      </button>)}</nav>
-      {repo && <div className="branches">
-        <h2>Ветки и теги</h2>
-        {[...new Set([git.branch, ...git.branches].filter(Boolean))].map(branch =>
-          <button key={branch} disabled={!!busy} className={branch === git.branch ? 'current' : ''}
-            title={branch} onClick={() => { navigate('Импорт'); setRef(branch); invalidate(); }}>
-            <span className="branch-dot" aria-hidden="true"/>{branch}</button>)}
+      <div className="operation-group" aria-label="Git операции">
+        <button className="operation" title="Pull" aria-label="Pull" disabled={!repo || !git.branch || !!busy}
+          onClick={() => run('pull', repo, 'Git pull', result => { setGit(result); setMessage('Pull выполнен.'); })}><OperationIcon name="pull"/><span>PULL</span></button>
+        <button className="operation" title="Fetch" aria-label="Fetch" disabled={!repo || !!busy}
+          onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}><OperationIcon name="fetch"/><span>FETCH</span></button>
+        <button className="operation" title="Push" aria-label="Push" disabled={!repo || !git.head || !git.branch || !!busy}
+          onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен.'); })}><OperationIcon name="push"/><span>PUSH</span></button>
+      </div>
+      {profile?.type === 'superset' && applicationReady && <div className="operation-group superset-operations" aria-label="Superset операции">
+        <button className="operation" title="Export" aria-label="Export" disabled={!!busy} onClick={() => navigate('Экспорт')}><OperationIcon name="export"/><span>EXPORT</span></button>
+        <button className="operation" title="Import" aria-label="Import" disabled={!!busy} onClick={() => navigate('Импорт')}><OperationIcon name="import"/><span>IMPORT</span></button>
+      </div>}
+      {repo && <div className="branches" key={repo}>
+        <div className="repo-views">
+          <button aria-pressed={page === 'Репозитории' && !cloning} disabled={!!busy}
+            onClick={() => { setCloning(false); navigate('Репозитории'); }}>Рабочее дерево</button>
+          <button aria-pressed={page === 'История Git' && !historyRef} disabled={!!busy}
+            onClick={() => showGitHistory()}>Все коммиты</button>
+        </div>
+        <BranchList label="Локальные ветки" names={git.localBranches} prefix="refs/heads/"
+          expanded active={page === 'История Git' && historyRef ? historyRef : 'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}/>
+        <BranchList label="Удалённые ветки" names={git.remoteBranches} prefix="refs/remotes/"
+          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>
+        {git.tags.length > 0 && <BranchList label="Теги" names={git.tags} prefix="refs/tags/"
+          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
-    <main>
-      <header><h1>{page}</h1></header>
+    <main className={page === 'История Git' ? 'history-page' : undefined}>
+      {page !== 'История Git' && <header><h1>{page}</h1></header>}
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
       {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
       {message && <div role="status" className="notice success">{message}</div>}
       <fieldset disabled={Boolean(busy)}>
+      {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}/>
+        : <p className="empty">Откройте репозиторий, чтобы увидеть историю Git.</p>)}
       {page === 'Приложения' && <>
         <section className="panel">
           <div className="section-title"><h2>Подключённые приложения</h2><button className="primary" onClick={() => editApplication()}>Добавить приложение</button></div>
@@ -327,12 +466,11 @@ function App() {
         </form>
       </section>}
       {page === 'Репозитории' && <>
-        <details className="panel" open={profile?.repo ? undefined : true}><summary>Открыть или клонировать репозиторий</summary><div className="form-grid">
+        {cloning && <section className="panel"><h2>Клонировать репозиторий</h2><div className="form-grid">
           <label className="wide">Локальный путь<input value={repoInput} onChange={e => setRepoInput(e.target.value)} placeholder="D:\repos\superset-config"/></label>
-          <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button>
-            <button className="primary" disabled={!repoInput} onClick={() => run('open', repoInput, 'Открытие репозитория', setOpened)}>Открыть</button></div>
+          <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button></div>
           <label className="wide">HTTPS URL для клонирования<input value={remote} placeholder="https://devops.example.com/Collection/Project/_git/Repository" onChange={e => setRemote(e.target.value)}/></label>
-        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></details>
+        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></section>}
         {repo && <section className="panel"><h2>Рабочее дерево</h2>
           <p className="hint" title={repo}>{repo}</p>
           <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>
@@ -341,7 +479,7 @@ function App() {
           {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
             <details open><summary>Рабочее дерево</summary><pre>{gitDiff.unstaged || '—'}</pre></details></div>}
           <div className="actions"><input aria-label="Имя ветки" value={newBranch} onChange={e => setNewBranch(e.target.value)} list="branches" placeholder="Имя локальной ветки"/>
-            <datalist id="branches">{git.branches.map(branch => <option key={branch} value={branch}/>)}</datalist>
+            <datalist id="branches">{git.localBranches.map(branch => <option key={branch} value={branch}/>)}</datalist>
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: false }, 'Переключение ветки', updateGit)}>Переключить</button>
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
         </section>}

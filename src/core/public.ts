@@ -4,7 +4,12 @@ import type { UpdateChanges, UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
 export type UpdateView = Omit<UpdateStatus, 'asset'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; hasToken: boolean; askPermission: boolean };
-export type GitState = { branch: string; status: string; head: string; branches: string[] };
+export type GitState = {
+  branch: string; status: string; head: string;
+  localBranches: string[]; remoteBranches: string[]; tags: string[];
+};
+export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
+export type GitCommitFile = { status: string; path: string; previousPath?: string };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
 export type Context = { repo: string; folder: string; profileId: string };
@@ -19,11 +24,16 @@ export type Requests = {
   probe: [string, { version: string; apiVersion: string; admin: boolean | null; export: boolean; import: boolean }];
   pickDirectory: [undefined, string];
   open: [string, { repo: string; state: GitState }];
+  init: [string, { repo: string; state: GitState }];
   clone: [{ url: string; path: string }, { repo: string; state: GitState }];
   status: [string, GitState];
   diff: [string, { staged: string; unstaged: string }];
+  gitLog: [{ repo: string; ref?: string; offset: number }, { commits: GitCommit[]; more: boolean }];
+  commitFiles: [{ repo: string; sha: string }, { message: string; files: GitCommitFile[] }];
+  commitPatch: [{ repo: string; sha: string; paths: string[] }, string];
   branch: [{ repo: string; branch: string; create: boolean }, GitState];
   fetch: [string, GitState];
+  pull: [string, GitState];
   push: [string, GitState];
   inventory: [string, AssetSummary[]];
   exportPreview: [Context & { selected: string[] }, Preview];

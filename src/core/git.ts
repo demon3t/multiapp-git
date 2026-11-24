@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
 import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
+import type { GitCommit, GitCommitFile } from './public';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -46,6 +47,18 @@ export async function openRepoRoot(path: string) {
   if (root !== selected) throw new Failure('Выберите корень отдельного Git-репозитория. Выбранная папка находится внутри другого репозитория.', 'git');
   return root;
 }
+export async function initRepo(path: string) {
+  if (!path.trim()) throw new Failure('Выберите папку для репозитория.');
+  const target = resolve(path);
+  await fs.mkdir(target, { recursive: true });
+  const existing = await openRepo(target).catch(() => undefined);
+  if (existing) {
+    if (existing === await fs.realpath(target)) return existing;
+    throw new Failure('Выберите папку вне существующего репозитория.', 'git');
+  }
+  await git(target, ['init', '-b', 'main']);
+  return openRepoRoot(target);
+}
 export async function cloneRepo(url: string, folder: string) {
   let remote: URL;
   try { remote = new URL(url); } catch { throw new Failure('Укажите HTTPS URL Git.'); }
@@ -82,13 +95,24 @@ async function optionalHead(repo: string) {
   return '';
 }
 export async function gitStatus(repo: string) {
-  const [branch, status, branches, head] = await Promise.all([
+  const [branch, status, refs, head] = await Promise.all([
     command(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
     command(repo, ['status', '--porcelain=v1', '--untracked-files=all']),
-    command(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes', 'refs/tags']),
+    command(repo, ['for-each-ref', '--format=%(refname)%09%(symref)', 'refs/heads', 'refs/remotes', 'refs/tags']),
     optionalHead(repo)
   ]);
-  return { branch, status, branches: branches ? branches.split(/\r?\n/) : [], head };
+  const localBranches: string[] = [];
+  const remoteBranches: string[] = [];
+  const tags: string[] = [];
+  for (const line of refs.split(/\r?\n/)) {
+    const [ref, symbolic] = line.split('\t');
+    if (symbolic) continue;
+    if (ref.startsWith('refs/heads/')) localBranches.push(ref.slice('refs/heads/'.length));
+    if (ref.startsWith('refs/remotes/')) remoteBranches.push(ref.slice('refs/remotes/'.length));
+    if (ref.startsWith('refs/tags/')) tags.push(ref.slice('refs/tags/'.length));
+  }
+  if (branch && !localBranches.includes(branch)) localBranches.push(branch);
+  return { branch, status, localBranches, remoteBranches, tags, head };
 }
 export async function gitDiff(repo: string) {
   const flags = ['--no-ext-diff', '--no-textconv', '--no-color'];
@@ -97,6 +121,60 @@ export async function gitDiff(repo: string) {
     command(repo, ['diff', ...flags])
   ]);
   return { staged, unstaged };
+}
+
+const commitSha = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const historyPageSize = 200;
+
+export async function gitLog(repo: string, ref: string | undefined, offset: number) {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Failure('Неверное смещение истории.');
+  const revisions = ref ? [await resolveCommit(repo, ref)] : ['--branches', '--remotes', '--tags'];
+  if (!ref && await optionalHead(repo)) revisions.push('HEAD');
+  const args = ['log', '--topo-order', '--decorate=full', '--no-notes', '--no-show-signature', '-z',
+    '--format=%H%x00%P%x00%D%x00%an%x00%aI%x00%s', '--skip=' + offset,
+    '--max-count=' + (historyPageSize + 1), ...revisions, '--'];
+  const fields = (await git(repo, args)).toString('utf8').split('\0');
+  const commits: GitCommit[] = [];
+  for (let index = 0; index + 5 < fields.length; index += 6) {
+    const [sha, parents, refs, author, date, subject] = fields.slice(index, index + 6);
+    commits.push({ sha, parents: parents.split(' ').filter(Boolean), refs: refs ? refs.split(', ') : [], author, date, subject });
+  }
+  return { commits: commits.slice(0, historyPageSize), more: commits.length > historyPageSize };
+}
+
+async function commitDiffArgs(repo: string, sha: string) {
+  if (!commitSha.test(sha)) throw new Failure('Укажите полный SHA коммита.');
+  const parents = await command(repo, ['show', '--no-notes', '--no-show-signature', '-s', '--format=%P', sha, '--']);
+  const firstParent = parents.split(' ')[0];
+  const revisions = firstParent ? [firstParent, sha] : [sha];
+  return { flags: ['diff-tree', '--root', '--no-commit-id', '-r',
+    '--no-ext-diff', '--no-textconv', '--no-color', '-M'], revisions };
+}
+
+export async function commitFiles(repo: string, sha: string) {
+  const { flags, revisions } = await commitDiffArgs(repo, sha);
+  const [message, listing] = await Promise.all([
+    command(repo, ['show', '--no-notes', '--no-show-signature', '-s', '--format=%B', sha, '--']),
+    git(repo, [...flags, '--name-status', '-z', ...revisions, '--'])
+  ]);
+  const fields = split(listing.toString('utf8'));
+  const files: GitCommitFile[] = [];
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    const path = fields[index++];
+    if (/^[RC]/.test(status)) files.push({ status, previousPath: path, path: fields[index++] });
+    else files.push({ status, path });
+  }
+  return { message, files };
+}
+
+export async function commitPatch(repo: string, sha: string, paths: string[]) {
+  if (!Array.isArray(paths) || paths.length < 1 || paths.length > 2 ||
+      paths.some(path => typeof path !== 'string' || !path || path.includes('\0'))) {
+    throw new Failure('Выберите файл коммита.');
+  }
+  const { flags, revisions } = await commitDiffArgs(repo, sha);
+  return (await git(repo, ['--literal-pathspecs', ...flags, '-p', ...revisions, '--', ...paths])).toString('utf8');
 }
 async function assertClean(repo: string) {
   const status = await gitStatus(repo);
@@ -115,6 +193,13 @@ export async function fetchRemote(repo: string) {
   await git(repo, ['fetch', '--all']);
   return gitStatus(repo);
 }
+
+export async function pullBranch(repo: string) {
+  await assertClean(repo);
+  await git(repo, ['pull', '--ff-only']);
+  return gitStatus(repo);
+}
+
 export async function pushBranch(repo: string) {
   const { branch } = await gitStatus(repo);
   if (!branch) throw new Failure('Выберите локальную ветку для push.');
