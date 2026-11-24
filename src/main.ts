@@ -1,17 +1,18 @@
 import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model';
 import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
-import { assertValid, inspect, summarize } from './core/snapshot';
-import { applyImport, confirmation, exportSnapshot, inventory, planImport, sourceSnapshot, verifyImport } from './core/workflow';
-import { checkRelease, releasesPage, UpdateStatus } from './core/updates';
+import { prepareSnapshot, summarize } from './core/snapshot';
+import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
+import { checkRelease, downloadInstaller, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
-type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; encryptedToken?: string } };
+type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean; encryptedToken?: string } };
 let state: State;
 let window: BrowserWindow;
 let busy = false;
@@ -21,7 +22,20 @@ const path = () => join(app.getPath('userData'), 'mgit.json');
 let releaseStatus: UpdateStatus = { current: app.getVersion(), status: 'idle' };
 let updateCheck: Promise<ReturnType<typeof updateView>> | undefined;
 let updateTimer: NodeJS.Timeout | undefined;
-const updateView = () => ({ ...releaseStatus, automatic: state.updates?.automatic, hasToken: Boolean(state.updates?.encryptedToken) });
+let installer: string | undefined;
+let updateDownload: Promise<void> | undefined;
+let launchingInstaller = false;
+let quitForUpdate = false;
+const updatesSupported = () => app.isPackaged && process.platform === 'win32' && process.arch === 'x64';
+const updateView = () => {
+  const { asset, ...status } = releaseStatus;
+  return { ...status, canInstall: Boolean(asset && updatesSupported()), automatic: state.updates?.automatic,
+    autoInstall: state.updates?.autoInstall, hasToken: Boolean(state.updates?.encryptedToken) };
+};
+function updateToken() {
+  const encrypted = state.updates?.encryptedToken;
+  return encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '';
+}
 
 function reportUpdate() {
   if (window && !window.isDestroyed()) window.webContents.send('mgit:update', updateView());
@@ -33,13 +47,12 @@ function scheduleUpdate(delay: number) {
 }
 function checkUpdate() {
   if (updateCheck) return updateCheck;
+  if (updateDownload || installer || launchingInstaller) return Promise.resolve(updateView());
   updateCheck = (async () => {
     releaseStatus = { current: app.getVersion(), status: 'checking' };
     reportUpdate();
     try {
-      const encrypted = state.updates?.encryptedToken;
-      const token = encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '';
-      releaseStatus = await checkRelease(app.getVersion(), token, (url, options) => net.fetch(url, options));
+      releaseStatus = await checkRelease(app.getVersion(), updateToken(), (url, options) => net.fetch(url, options));
     } catch {
       releaseStatus = { current: app.getVersion(), status: 'error', message: 'Не удалось прочитать защищённый токен GitHub. Сохраните его заново.' };
     }
@@ -47,8 +60,36 @@ function checkUpdate() {
   })().finally(() => {
     updateCheck = undefined;
     scheduleUpdate(24 * 60 * 60 * 1000);
+    autoDownload();
   });
   return updateCheck;
+}
+
+function fetchUpdate() {
+  if (updateDownload) return updateDownload;
+  const asset = releaseStatus.asset;
+  if (installer) return Promise.resolve();
+  if (!asset || !updatesSupported()) throw new Failure('Проверенный установщик для этой сборки недоступен.');
+  releaseStatus = { ...releaseStatus, status: 'downloading', progress: 0, message: undefined };
+  reportUpdate();
+  updateDownload = Promise.resolve().then(async () => {
+    installer = await downloadInstaller(asset, app.getVersion(), updateToken(), app.getPath('temp'), fetch, progress => {
+      releaseStatus.progress = progress;
+      reportUpdate();
+    });
+    releaseStatus.status = 'ready';
+  }).catch(() => {
+    const message = 'Не удалось загрузить или проверить установщик. Повторите попытку.';
+    releaseStatus = { ...releaseStatus, status: 'available', message };
+    throw new Failure(message);
+  }).finally(() => { updateDownload = undefined; reportUpdate(); });
+  return updateDownload;
+}
+
+function autoDownload() {
+  if (state.updates?.automatic && state.updates.autoInstall && releaseStatus.status === 'available' && updateView().canInstall) {
+    void fetchUpdate().catch(() => undefined);
+  }
 }
 
 async function persist(next: State) {
@@ -91,7 +132,7 @@ async function save(input: ProfileInput) {
   if (input.auth === 'db' && !input.username?.trim()) throw new Failure('Укажите пользователя Superset.');
   if (input.ca && (!input.ca.includes('-----BEGIN CERTIFICATE-----') || /PRIVATE KEY/.test(input.ca))) throw new Failure('Корпоративный CA должен быть сертификатом PEM.');
   const url = profileUrl(input.url);
-  const repo = await git.openRepo(input.repo.trim());
+  const repo = await git.openRepoRoot(input.repo.trim());
   const profile: Profile = { id: old?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
     auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
   let secret: Secret = { credential: '', connections: {} };
@@ -125,15 +166,12 @@ async function save(input: ProfileInput) {
 const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][1] | Promise<Requests[K][1]> } = {
   profiles: listProfiles, save, probe: id => profileFor(id).adapter.probe(),
   async pickDirectory() { return (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0] ?? ''; },
-  async open(path) { const repo = await git.openRepo(path); return { repo, state: await git.gitStatus(repo) }; },
+  async open(path) { const repo = await git.openRepoRoot(path); return { repo, state: await git.gitStatus(repo) }; },
   async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
   fetch: git.fetchRemote, push: git.pushBranch,
   async inventory(id) {
-    const files = await profileFor(id).adapter.snapshot();
-    const issues = inspect(files).issues.filter(issue => !issue.path || issue.path === '[путь скрыт]' || issue.path === 'metadata.yaml');
-    if (issues.length) throw new Failure('Невозможно безопасно показать состав выгрузки.', 'validation', issues);
-    return inventory(files);
+    return (await exportSnapshot(profileFor(id).adapter)).assets;
   },
   async exportPreview(input) {
     preparedExport = undefined;
@@ -142,7 +180,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
     const preview = await git.previewWrite(repo, input.folder, exported.files);
     const id = randomUUID();
     preparedExport = { ...input, ...exported, id, head: preview.head, branch: preview.branch, written: false };
-    return { ...preview, id, counts: exported.counts };
+    return { ...preview, id, counts: exported.counts, issues: exported.issues };
   },
   async write(id) {
     const prepared = preparedExport;
@@ -160,21 +198,25 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async validate(input) {
     const source = await sourceSnapshot(input.repo, input.ref, input.folder);
-    return { sha: source.sha, counts: summarize(assertValid(source.files)) };
+    const { assets, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
+    return { sha: source.sha, counts: summarize(assets), excluded };
   },
+  snapshotFolders: input => git.snapshotFolders(input.repo, input.ref),
   async plan(input) {
     preparedImport = undefined;
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
     const { profile, secret, adapter } = profileFor(input.profileId);
-    const expected = await planImport(adapter, profile, source.files, secret.connections);
+    const { files, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
+    const expected = await planImport(adapter, profile, files, secret.connections);
     const id = randomUUID();
-    preparedImport = { ...input, ...source, id, expected };
+    preparedImport = { ...input, ...source, files, id, expected };
     const { targetState, connectionState, ...publicPlan } = expected;
-    return { ...publicPlan, id, sha: source.sha };
+    return { ...publicPlan, id, sha: source.sha, excluded };
   },
   async verify(input) {
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
-    return verifyImport(profileFor(input.profileId).adapter, source.files);
+    const { files } = prepareSnapshot(source.files, input.compatibleOnly);
+    return verifyImport(profileFor(input.profileId).adapter, files);
   },
   async apply(input) {
     const prepared = preparedImport;
@@ -193,24 +235,39 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   history: () => state.history,
   updateStatus: updateView,
   checkUpdate,
+  async installUpdate() {
+    if (busy || launchingInstaller) throw new Failure('Дождитесь завершения текущей операции.');
+    await fetchUpdate();
+    if (busy) throw new Failure('Дождитесь завершения текущей операции.');
+    quitForUpdate = true;
+    setImmediate(() => app.quit());
+    return updateView();
+  },
   async saveUpdateSettings(input) {
-    if (typeof input.automatic !== 'boolean') throw new Failure('Укажите, включать ли автоматическую проверку.');
+    if (typeof input.automatic !== 'boolean' || (input.autoInstall !== undefined && typeof input.autoInstall !== 'boolean')) {
+      throw new Failure('Проверьте настройки автоматического обновления.');
+    }
     const token = input.token?.trim();
     let encryptedToken = input.clearToken ? undefined : state.updates?.encryptedToken;
-    if ((token || input.clearToken) && updateCheck) throw new Failure('Дождитесь завершения проверки перед сменой токена.');
+    if ((token || input.clearToken) && (updateCheck || updateDownload || launchingInstaller)) throw new Failure('Дождитесь завершения обновления перед сменой токена.');
     if (token) {
       if (token.length > 512 || !/^[\w-]+$/.test(token)) throw new Failure('Проверьте формат токена GitHub.');
       if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
       encryptedToken = safeStorage.encryptString(token).toString('base64');
     }
-    await persist({ ...state, updates: { automatic: input.automatic, encryptedToken } });
-    if (!updateCheck && (token || input.clearToken)) releaseStatus = { current: app.getVersion(), status: 'idle' };
+    await persist({ ...state, updates: { automatic: input.automatic, autoInstall: input.autoInstall ?? state.updates?.autoInstall, encryptedToken } });
+    if (token || input.clearToken) {
+      if (installer) await fs.rm(installer, { force: true }).catch(() => undefined);
+      installer = undefined;
+      releaseStatus = { current: app.getVersion(), status: 'idle' };
+    }
     scheduleUpdate(15_000);
+    autoDownload();
     return reportUpdate();
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'updateStatus', 'checkUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
@@ -265,3 +322,23 @@ else {
   });
 }
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', event => {
+  if (!installer || busy || launchingInstaller || !(quitForUpdate || (state.updates?.automatic && state.updates.autoInstall))) return;
+  event.preventDefault();
+  launchingInstaller = true;
+  releaseStatus.status = 'installing';
+  reportUpdate();
+  const process = spawn(installer, ['--updated', '/S', ...(quitForUpdate ? ['--force-run'] : [])],
+    { detached: true, stdio: 'ignore' });
+  process.once('spawn', () => {
+    process.unref();
+    app.quit();
+  });
+  process.once('error', () => {
+    launchingInstaller = false;
+    quitForUpdate = false;
+    releaseStatus = { ...releaseStatus, status: 'ready', message: 'Не удалось запустить установщик.' };
+    reportUpdate();
+    if (!window || window.isDestroyed()) app.exit();
+  });
+});

@@ -1,22 +1,22 @@
 import type { Change } from './git';
-import type { Environment, Profile } from './model';
+import type { Environment, Issue, Profile } from './model';
 import type { UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
-export type UpdateView = UpdateStatus & { automatic?: boolean; hasToken: boolean };
+export type UpdateView = Omit<UpdateStatus, 'asset'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; hasToken: boolean };
 export type GitState = { branch: string; status: string; head: string; branches: string[] };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
 export type Context = { repo: string; folder: string; profileId: string };
 export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
 export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
-export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[] };
-export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[] };
+export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[]; issues: Issue[] };
+export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[]; excluded: Issue[] };
 export type Verification = { verified: boolean; checked: number; issues: unknown[] };
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
   save: [ProfileInput, ProfileSummary[]];
-  probe: [string, { version: string; apiVersion: string; admin: boolean; export: boolean; import: boolean }];
+  probe: [string, { version: string; apiVersion: string; admin: boolean | null; export: boolean; import: boolean }];
   pickDirectory: [undefined, string];
   open: [string, { repo: string; state: GitState }];
   clone: [{ url: string; path: string }, { repo: string; state: GitState }];
@@ -29,14 +29,16 @@ export type Requests = {
   exportPreview: [Context & { selected: string[] }, Preview];
   write: [string, GitState];
   commit: [{ id: string; message: string }, GitState];
-  validate: [{ repo: string; folder: string; ref: string }, { sha: string; counts: Record<string, number> }];
-  plan: [Context & { ref: string }, Plan];
-  verify: [Context & { ref: string }, Verification];
+  validate: [{ repo: string; folder: string; ref: string; compatibleOnly?: boolean }, { sha: string; counts: Record<string, number>; excluded: Issue[] }];
+  snapshotFolders: [{ repo: string; ref: string }, string[]];
+  plan: [Context & { ref: string; compatibleOnly?: boolean }, Plan];
+  verify: [Context & { ref: string; compatibleOnly?: boolean }, Verification];
   apply: [{ id: string; confirm: string; backup: boolean }, Verification];
   history: [undefined, Entry[]];
   updateStatus: [undefined, UpdateView];
   checkUpdate: [undefined, UpdateView];
-  saveUpdateSettings: [{ automatic: boolean; token?: string; clearToken?: boolean }, UpdateView];
+  installUpdate: [undefined, UpdateView];
+  saveUpdateSettings: [{ automatic: boolean; autoInstall?: boolean; token?: string; clearToken?: boolean }, UpdateView];
   openReleases: [undefined, void];
 };
 export type Response<T> = { ok: true; data: T } | { ok: false; message: string; code: string; details?: unknown };

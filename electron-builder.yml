@@ -1,5 +1,6 @@
 appId: com.mgit.desktop
 productName: mGit
+publish: null
 directories:
   output: release
 files:
@@ -12,6 +13,6 @@ win:
   target: nsis
   signAndEditExecutable: false
 nsis:
-  artifactName: mGit-Setup-${version}.${ext}
+  artifactName: mGit-Windows-x64-Setup.${ext}
   allowToChangeInstallationDirectory: true
   oneClick: false

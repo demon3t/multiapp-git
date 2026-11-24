@@ -3,15 +3,15 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Adapter, Failure, Files, Profile } from './model';
-import { assertValid, inspect, materialize, normalizeExport, selectAssets, summarize } from './snapshot';
+import { assertValid, inspect, inspectExport, materialize, normalizeExport, selectAssets, summarize } from './snapshot';
 import { compare, readCommit, resolveCommit } from './git';
 import { pack } from './zip';
 
-export const inventory = (files: Files) => inspect(files).assets.map(({ data, ...asset }) => asset);
 export async function exportSnapshot(adapter: Adapter, selected: string[] = []) {
-  const files = selectAssets(normalizeExport(await adapter.download()), selected);
-  const assets = assertValid(files);
-  return { files, assets: inventory(files), counts: summarize(assets) };
+  const source = adapter.exportFiles ? await adapter.exportFiles() : normalizeExport(await adapter.download());
+  const files = selectAssets(source, selected);
+  const { assets, issues } = inspectExport(files);
+  return { files, assets: assets.map(({ data, ...asset }) => asset), counts: summarize(assets), issues };
 }
 export async function sourceSnapshot(repo: string, ref: string, folder: string) {
   const sha = await resolveCommit(repo, ref);
@@ -46,9 +46,11 @@ export async function verifyImport(adapter: Adapter, files: Files) {
   const expected = assertValid(files);
   const observed = inspect(normalizeExport(await adapter.download()));
   const byId = new Map(observed.assets.map(asset => [asset.uuid, asset]));
+  const counts = new Map<string, number>();
+  for (const asset of observed.assets) counts.set(asset.uuid, (counts.get(asset.uuid) ?? 0) + 1);
   const mismatches = expected.flatMap(asset => {
     const actual = byId.get(asset.uuid);
-    const count = observed.assets.filter(item => item.uuid === asset.uuid).length;
+    const count = counts.get(asset.uuid);
     return !actual || actual.kind !== asset.kind || count !== 1 || [...new Set(asset.references)].sort().join() !== [...new Set(actual.references)].sort().join()
       ? [{ path: asset.path, message: !actual ? 'UUID не найден на цели.' : 'На цели отличаются связи, тип или число объектов с UUID.' }] : [];
   });
