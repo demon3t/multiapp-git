@@ -318,7 +318,7 @@ else {
     window = new BrowserWindow({ width: 1270, height: 850, minWidth: 860, minHeight: 590,
       icon: join(__dirname, 'ui', 'icon.png'),
       backgroundColor: '#f5f6fa', titleBarStyle: 'hidden',
-      titleBarOverlay: { color: '#e5e8ee', symbolColor: '#223148', height: 39 },
+      titleBarOverlay: { color: '#e5e8ee', symbolColor: '#223148', height: 30 },
       webPreferences: { preload: join(__dirname, 'preload.js'), contextIsolation: true, sandbox: true, nodeIntegration: false } });
     window.removeMenu();
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

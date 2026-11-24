@@ -235,8 +235,8 @@ function App() {
 
   return <div className="shell">
     <div className="tabbar">
-      <button className="brand" onClick={() => navigate('Приложения')} disabled={!!busy}>
-        <img src="./icon.png" width="16" height="16" alt=""/><strong>mGit</strong>
+      <button className="brand" aria-label="Приложения" onClick={() => navigate('Приложения')} disabled={!!busy}>
+        <img src="./icon.png" width="16" height="16" alt=""/>
       </button>
       <div className="repo-menu">
         <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => { setAppMenu(false); setRepoMenu(!repoMenu); }}>Файл ▾</button>

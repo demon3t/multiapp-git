@@ -24,10 +24,10 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 @media(max-width:1000px){.shell{grid-template-columns:190px minmax(0,1fr)}.context{grid-template-columns:repeat(2,minmax(0,1fr)) auto}.header-mark{display:none}}
 
 :root{font-family:"Segoe UI",Inter,sans-serif;background:#fff;color:#242c39;font-size:12px}
-.shell{height:100vh;min-height:0;grid-template-columns:196px minmax(0,1fr);grid-template-rows:39px 31px minmax(0,1fr) 22px;overflow:hidden}
+.shell{height:100vh;min-height:0;grid-template-columns:196px minmax(0,1fr);grid-template-rows:env(titlebar-area-height, 30px) 31px minmax(0,1fr) 22px;overflow:hidden}
 .tabbar,.toolbar,.statusbar{grid-column:1/-1;display:flex;align-items:center;min-width:0}
 .tabbar{background:#e5e8ee;border-bottom:1px solid #c5cbd4;padding:0 5px;gap:4px}
-.tabbar .brand{display:flex;align-items:center;gap:4px;font-size:14px;padding:0 8px;background:transparent;border:0;color:#223148}
+.tabbar .brand{display:grid;place-items:center;width:24px;padding:0;background:transparent;border:0}
 .app-tabs{align-self:stretch;display:flex;align-items:end;min-width:0;overflow:auto;gap:2px}
 .app-tabs button{display:flex;align-items:center;gap:6px;flex:0 0 auto;max-width:260px;overflow:hidden;text-overflow:ellipsis;border-radius:4px 4px 0 0;background:#edf0f5;border-color:#c9cfd9;border-bottom:0}
 .app-tabs button[aria-pressed=true]{background:#fafbfc;color:#15549e;border-top:2px solid #3e86d4}
