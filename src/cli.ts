@@ -4,37 +4,71 @@ import { resolve } from 'node:path';
 import { promises as fs } from 'node:fs';
 import { Environment, Failure, object, Profile, profileUrl, uuidPattern } from './core/model';
 import * as git from './core/git';
-import { assertValid, summarize } from './core/snapshot';
+import { prepareSnapshot, summarize } from './core/snapshot';
 import { Superset } from './core/superset';
+import { restore } from './core/restore';
 import { applyImport, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 
 const help = [
   'mGit export|validate|plan|import|verify --repo PATH --folder snapshots/test/assets --commit SHA',
   'Network operations: --target URL --environment DEV|TEST|PREPROD|PROD [--name NAME] [--ca PEM]',
   'export: [--select UUID,UUID] [--write]    import: --apply [--confirm TEXT] [--backup PATH]',
+  'validate|plan|import|verify: [--compatible-only]',
+  'restore --repo PATH --folder PATH [--ref BRANCH] --adapter FILE --adapter-sha256 SHA256 --target-name NAME --owner USER',
+  'restore: [--python PATH] [--source-orphans FILE] [--log FILE] [--apply | --verify-only]',
   'Credentials: MGIT_TOKEN or MGIT_USERNAME and MGIT_PASSWORD. Mappings: MGIT_CONNECTIONS_JSON.'
 ].join('\n');
 
 async function main() {
   const [action, ...args] = process.argv.slice(2);
   if (!action || ['--help', '-h'].includes(action)) { process.stdout.write(help + '\n'); return; }
-  if (!['export', 'validate', 'plan', 'import', 'verify'].includes(action)) throw new Failure('Неизвестная команда.', 'usage');
+  if (!['export', 'validate', 'plan', 'import', 'verify', 'restore'].includes(action)) throw new Failure('Неизвестная команда.', 'usage');
   const { values } = parseArgs({ args, options: {
     repo: { type: 'string' }, folder: { type: 'string' }, commit: { type: 'string' },
     target: { type: 'string' }, environment: { type: 'string' }, name: { type: 'string' }, ca: { type: 'string' },
-    write: { type: 'boolean' }, apply: { type: 'boolean' }, select: { type: 'string' }, confirm: { type: 'string' }, backup: { type: 'string' }
+    write: { type: 'boolean' }, apply: { type: 'boolean' }, select: { type: 'string' }, confirm: { type: 'string' }, backup: { type: 'string' },
+    'compatible-only': { type: 'boolean' }, ref: { type: 'string' },
+    adapter: { type: 'string' }, 'adapter-sha256': { type: 'string' }, python: { type: 'string' },
+    'target-name': { type: 'string' }, owner: { type: 'string' }, 'source-orphans': { type: 'string' },
+    'verify-only': { type: 'boolean' }, log: { type: 'string' }
   } });
+  if (action === 'restore') {
+    const checksum = values['adapter-sha256'];
+    const target = values['target-name'];
+    if (!values.repo || !values.folder || !values.adapter || !checksum || !/^[a-f0-9]{64}$/i.test(checksum) ||
+        !target?.trim() || !values.owner?.trim() || (values.apply && values['verify-only']) ||
+        values.commit || values['compatible-only']) {
+      throw new Failure('Проверьте параметры restore. Используйте --help.', 'usage');
+    }
+    const data = await restore({
+      repo: await git.openRepoRoot(values.repo), ref: values.ref ?? 'HEAD', folder: values.folder,
+      adapter: values.adapter, adapterSha256: checksum, python: values.python ?? 'python',
+      target, owner: values.owner, orphans: values['source-orphans'], log: values.log,
+      apply: values.apply, verifyOnly: values['verify-only']
+    });
+    console.log(JSON.stringify({ ok: true, action, data }));
+    return;
+  }
+  if (values.ref !== undefined || values.adapter || values['adapter-sha256'] || values.python || values['target-name'] ||
+      values.owner || values['source-orphans'] || values['verify-only'] || values.log) {
+    throw new Failure('Параметры адаптера доступны в команде restore.', 'usage');
+  }
   if (!values.repo || !values.folder || !values.commit || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/i.test(values.commit)) {
     throw new Failure('Укажите --repo, --folder и полный --commit SHA.', 'usage');
   }
   if (action === 'import' && !values.apply) throw new Failure('Для запуска импорта добавьте --apply.', 'usage');
+  if (action === 'export' && values['compatible-only']) throw new Failure('--compatible-only применяется к снимку из Git.', 'usage');
   const repo = await git.openRepo(values.repo);
   const commit = values.commit.toLowerCase();
-  const source = () => sourceSnapshot(repo, commit, values.folder!);
+  const source = async () => {
+    const snapshot = await sourceSnapshot(repo, commit, values.folder!);
+    return { sha: snapshot.sha, ...prepareSnapshot(snapshot.files, values['compatible-only']) };
+  };
+  const exclusions = (excluded: Awaited<ReturnType<typeof source>>['excluded']) => values['compatible-only'] ? { excluded } : {};
   let data: unknown;
   if (action === 'validate') {
     const snapshot = await source();
-    data = { sha: snapshot.sha, counts: summarize(assertValid(snapshot.files)) };
+    data = { sha: snapshot.sha, counts: summarize(snapshot.assets), ...exclusions(snapshot.excluded) };
   } else {
     if (!values.target || !values.environment || !['DEV', 'TEST', 'PREPROD', 'PROD'].includes(values.environment)) {
       throw new Failure('Укажите --target и --environment.', 'usage');
@@ -61,19 +95,20 @@ async function main() {
       const preview = await git.previewWrite(repo, values.folder, exported.files);
       if (preview.head !== commit) throw new Failure('HEAD изменился во время экспорта.');
       if (values.write) await git.writeSnapshot(repo, values.folder, exported.files, preview);
-      data = { head: preview.head, branch: preview.branch, counts: exported.counts, written: Boolean(values.write && preview.changes.length),
+      data = { head: preview.head, branch: preview.branch, counts: exported.counts, issues: exported.issues, written: Boolean(values.write && preview.changes.length),
         changes: preview.changes.map(({ path, action }) => ({ path, action })) };
     } else {
       const snapshot = await source();
       if (action === 'import') {
-        data = await applyImport(adapter, profile, snapshot.files, connections, { sha: snapshot.sha, confirm: values.confirm, backup: values.backup });
+        const result = await applyImport(adapter, profile, snapshot.files, connections, { sha: snapshot.sha, confirm: values.confirm, backup: values.backup });
+        data = { ...result, ...exclusions(snapshot.excluded) };
       } else if (action === 'plan') {
         const { targetState, connectionState, ...plan } = await planImport(adapter, profile, snapshot.files, connections);
-        data = { sha: snapshot.sha, ...plan };
+        data = { sha: snapshot.sha, ...plan, ...exclusions(snapshot.excluded) };
       } else {
         const result = await verifyImport(adapter, snapshot.files);
         if (!result.verified) throw new Failure('Проверка цели обнаружила расхождения.', 'verify', result);
-        data = result;
+        data = { ...result, ...exclusions(snapshot.excluded) };
       }
     }
   }

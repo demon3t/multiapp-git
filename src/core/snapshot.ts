@@ -1,4 +1,4 @@
-import { parse, parseDocument } from 'yaml';
+import { isScalar, parse, parseDocument } from 'yaml';
 import { Asset, Failure, Files, Inspection, Kind, kinds, list, normalizeUuid, object, Row } from './model';
 
 export const maxBytes = 64 * 1024 * 1024;
@@ -15,6 +15,16 @@ const placeholder = 'sqlite:///mgit-unconfigured.db';
 const masked = (value: unknown) => value == null || value === '' || (typeof value === 'string' && /^\*{3,}$/.test(value));
 const sensitive = /^(?:password|passwd|pwd|access_?token|refresh_?token|token|api_?key|secret(?:_?key)?|client_?secret|private_?key|authorization|credentials|credentials_info|cookie|ssh_tunnel|encrypted_extra|keyfile_dict|service_account|connect_args|engine_params)$/i;
 const credentialValue = /-----BEGIN [A-Z ]*PRIVATE KEY-----|\b(?:AKIA|ASIA)[A-Z0-9]{16}\b|\b(?:gh[pousr]_[a-z0-9]{16,}|github_pat_[a-z0-9_]{16,})\b|\beyJ[a-zA-Z0-9_-]{8,}\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+|\b[a-z][a-z0-9+.-]*:\/\/[^\s/"']+:[^\s/"']+@|\b(?:password|passwd|pwd|token|secret|api_key)\s*[=:]\s*["']?[^*'"\s,;&}]+/i;
+export function redactDatabase(source: string) {
+  const doc = parseDocument(source);
+  if (doc.errors.length || !doc.has('uuid')) throw new Failure('Некорректный YAML подключения.', 'format');
+  doc.set('sqlalchemy_uri', 'REDACTED');
+  for (const key of Object.keys(object(doc.toJS({ maxAliasCount: 0 })))) {
+    if (sensitive.test(key) || /^(?:extra|masked_encrypted_extra|server_cert|parameters|ssh_.*|client_cert|client_key)$/i.test(key)) doc.delete(key);
+  }
+  doc.set('extra', {});
+  return doc.toString({ lineWidth: 0 });
+}
 function hasSecret(value: unknown, depth = 0): boolean {
   if (depth > 45) return true;
   if (typeof value === 'string') {
@@ -99,12 +109,12 @@ export function inspect(files: Files): Inspection {
         const position = object(data.position);
         for (const node of Object.values(position).map(object)) {
           if ([...list(node.children), ...list(node.parents)].some(id => typeof id !== 'string' || !Object.hasOwn(position, id))) {
-            issues.push({ path, message: 'В layout есть ссылка на отсутствующий компонент.' });
+            issues.push({ path, message: 'В layout есть ссылка на отсутствующий компонент.', dependency: true });
           }
           if (node.type === 'CHART') {
             const meta = object(node.meta);
             refs.push([meta.uuid, 'charts', 'layout.chart.uuid']);
-            if (typeof meta.chartId !== 'number') issues.push({ path, message: 'В layout графика нет chartId.' });
+            if (typeof meta.chartId !== 'number') issues.push({ path, message: 'В layout графика нет chartId.', dependency: true });
             else chartIds.add(meta.chartId);
           }
         }
@@ -115,7 +125,7 @@ export function inspect(files: Files): Inspection {
           }
         }
         for (const id of list(metadata.timed_refresh_immune_slices)) {
-          if (typeof id !== 'number' || !chartIds.has(id)) issues.push({ path, message: 'В настройках автообновления есть график вне layout.' });
+          if (typeof id !== 'number' || !chartIds.has(id)) issues.push({ path, message: 'В настройках автообновления есть график вне layout.', dependency: true });
         }
       }
       asset.references = refs.map(([value]) => normalizeUuid(value)).filter(Boolean);
@@ -129,7 +139,7 @@ export function inspect(files: Files): Inspection {
       const uuid = normalizeUuid(value);
       if (uuid && byId.get(uuid)?.kind === kind) continue;
       const dashboards = asset.kind === 'charts' ? assets.filter(a => a.kind === 'dashboards' && a.references.includes(asset.uuid)).map(a => a.name) : undefined;
-      issues.push({ path: asset.path, message: uuid ? 'Не найдена зависимость ' + field + ' (' + uuid + ').' : 'Нет обязательного ' + field + '.', dashboards });
+      issues.push({ path: asset.path, message: uuid ? 'Не найдена зависимость ' + field + ' (' + uuid + ').' : 'Нет обязательного ' + field + '.', dashboards, dependency: true });
     }
   }
   return result;
@@ -158,8 +168,17 @@ export function assertValid(files: Files) {
   if (inspection.issues.length) throw new Failure('Проверка снимка обнаружила ошибки.', 'validation', inspection.issues);
   return inspection.assets;
 }
-export function compatibleSnapshot(files: Files) {
+export function inspectExport(files: Files) {
+  const result = inspect(files);
+  if (result.issues.some(issue => !issue.dependency)) {
+    throw new Failure('Снимок нельзя сохранить. Проверьте формат и секреты.', 'validation', result.issues);
+  }
+  return result;
+}
+export function prepareSnapshot(files: Files, compatibleOnly = false) {
+  if (!compatibleOnly) return { files, assets: assertValid(files), excluded: [] };
   const { assets, issues } = inspect(files);
+  if (!issues.length && assets.length) return { files, assets, excluded: [] };
   if (issues.some(issue => !assetPath(issue.path) || issue.path === 'metadata.yaml' || issue.message === 'Повторяющийся UUID.')) {
     throw new Failure('Снимок содержит ошибки, которые нельзя исключить частичным импортом.', 'validation', issues);
   }
@@ -181,8 +200,13 @@ export function compatibleSnapshot(files: Files) {
     }
   }
   const compatible = new Map([...files].filter(([path]) => !excluded.has(path)));
-  if (!assertValid(compatible).length) throw new Failure('В снимке нет объектов для частичного импорта.', 'validation', issues);
-  return { files: compatible, excluded: [...excluded].map(([path, message]) => ({ path, message })) };
+  const compatibleAssets = assertValid(compatible);
+  if (!compatibleAssets.length) throw new Failure('В снимке нет объектов для частичного импорта.', 'validation', issues);
+  return { files: compatible, assets: compatibleAssets, excluded: [...excluded].map(([path, message]) => ({ path, message })) };
+}
+export function compatibleSnapshot(files: Files) {
+  const { files: compatible, excluded } = prepareSnapshot(files, true);
+  return { files: compatible, excluded };
 }
 export function selectAssets(files: Files, selected: string[]) {
   if (!selected.length) return files;
@@ -208,15 +232,23 @@ export function summarize(assets: Asset[]) {
   return Object.fromEntries(kinds.map(kind => [kind, assets.filter(asset => asset.kind === kind).length]));
 }
 export function materialize(files: Files, connections: Record<string, string>) {
+  const assets = assertValid(files);
   const output = new Map(files);
+  const metadata = parseDocument(files.get('metadata.yaml')!);
+  const timestamp = metadata.get('timestamp', true);
+  if (isScalar(timestamp) && typeof timestamp.value === 'string') {
+    timestamp.type = 'QUOTE_DOUBLE';
+    output.set('metadata.yaml', metadata.toString({ lineWidth: 0 }));
+  }
   const passwords: Record<string, string> = {};
-  for (const asset of assertValid(files)) {
+  for (const asset of assets) {
     if (asset.kind !== 'databases') continue;
     const connection = connections[asset.uuid];
     if (!connection || /[\r\n\0]/.test(connection) || !/^[a-z][a-z0-9+_-]*:\/\//i.test(connection)) {
       throw new Failure('Настройте локальное подключение для ' + asset.name + ' (' + asset.uuid + ').', 'mapping');
     }
     const document = parseDocument(files.get(asset.path)!);
+    if (document.get('extra') == null) document.set('extra', {});
     const auth = /^([a-z][a-z0-9+_-]*:\/\/[^\/@]*?):([^\/@]+)@/i.exec(connection);
     if (auth) {
       try { passwords[asset.path] = decodeURIComponent(auth[2]); }

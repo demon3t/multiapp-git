@@ -6,8 +6,8 @@ import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model'
 import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
-import { assertValid, compatibleSnapshot, inspect, summarize } from './core/snapshot';
-import { applyImport, confirmation, exportSnapshot, inventory, planImport, sourceSnapshot, verifyImport } from './core/workflow';
+import { prepareSnapshot, summarize } from './core/snapshot';
+import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 import { checkRelease, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
@@ -130,10 +130,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
   fetch: git.fetchRemote, push: git.pushBranch,
   async inventory(id) {
-    const files = await profileFor(id).adapter.snapshot();
-    const issues = inspect(files).issues.filter(issue => !issue.path || issue.path === '[путь скрыт]' || issue.path === 'metadata.yaml');
-    if (issues.length) throw new Failure('Невозможно безопасно показать состав выгрузки.', 'validation', issues);
-    return inventory(files);
+    return (await exportSnapshot(profileFor(id).adapter)).assets;
   },
   async exportPreview(input) {
     preparedExport = undefined;
@@ -142,7 +139,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
     const preview = await git.previewWrite(repo, input.folder, exported.files);
     const id = randomUUID();
     preparedExport = { ...input, ...exported, id, head: preview.head, branch: preview.branch, written: false };
-    return { ...preview, id, counts: exported.counts };
+    return { ...preview, id, counts: exported.counts, issues: exported.issues };
   },
   async write(id) {
     const prepared = preparedExport;
@@ -160,14 +157,15 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async validate(input) {
     const source = await sourceSnapshot(input.repo, input.ref, input.folder);
-    const { files, excluded } = input.compatibleOnly ? compatibleSnapshot(source.files) : { files: source.files, excluded: [] };
-    return { sha: source.sha, counts: summarize(assertValid(files)), excluded };
+    const { assets, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
+    return { sha: source.sha, counts: summarize(assets), excluded };
   },
+  snapshotFolders: input => git.snapshotFolders(input.repo, input.ref),
   async plan(input) {
     preparedImport = undefined;
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
     const { profile, secret, adapter } = profileFor(input.profileId);
-    const { files, excluded } = input.compatibleOnly ? compatibleSnapshot(source.files) : { files: source.files, excluded: [] };
+    const { files, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
     const expected = await planImport(adapter, profile, files, secret.connections);
     const id = randomUUID();
     preparedImport = { ...input, ...source, files, id, expected };
@@ -176,7 +174,8 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async verify(input) {
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
-    return verifyImport(profileFor(input.profileId).adapter, source.files);
+    const { files } = prepareSnapshot(source.files, input.compatibleOnly);
+    return verifyImport(profileFor(input.profileId).adapter, files);
   },
   async apply(input) {
     const prepared = preparedImport;
@@ -212,7 +211,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'updateStatus', 'checkUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',

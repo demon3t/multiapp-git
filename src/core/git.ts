@@ -4,7 +4,7 @@ import { join, resolve, dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
-import { assetPath, assertValid, maxBytes, safePath } from './snapshot';
+import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -59,6 +59,19 @@ export async function cloneRepo(url: string, folder: string) {
 export async function resolveCommit(repo: string, ref: string) {
   if (!ref.trim() || ref.startsWith('-') || /[\0\r\n]/.test(ref)) throw new Failure('Укажите ветку, тег или commit SHA.');
   return command(repo, ['rev-parse', '--verify', '--end-of-options', ref + '^{commit}']);
+}
+export async function snapshotFolders(repo: string, ref: string) {
+  const sha = await resolveCommit(repo, ref);
+  const paths = split((await git(repo, ['ls-tree', '-rz', '--name-only', sha])).toString('utf8'));
+  const folders = new Set(paths.flatMap(path => {
+    const match = /\/(?:databases|datasets|charts|dashboards|queries)\//g;
+    return [...path.matchAll(match)].filter(part => assetPath(path.slice(part.index + 1))).map(part => path.slice(0, part.index));
+  }));
+  return paths.flatMap(path => {
+    if (!path.endsWith('/metadata.yaml')) return [];
+    const folder = path.slice(0, -'/metadata.yaml'.length);
+    return folders.has(folder) && folder.includes('/') && folder.length <= 150 && safePath(folder) ? [folder] : [];
+  });
 }
 async function optionalHead(repo: string) {
   const refs = await command(repo, ['for-each-ref', '--format=%(refname)', 'refs/heads']);
@@ -200,16 +213,20 @@ function sameSnapshot(before: Files, after: Files) {
 }
 export async function previewWrite(repo: string, folder: string, files: Files) {
   snapshotPath(folder);
-  const { head, branch } = await assertClean(repo);
+  const { head, branch } = await gitStatus(repo);
+  if (!branch) throw new Failure('Переключитесь на локальную ветку.');
+  if (await command(repo, ['status', '--porcelain=v1', '--untracked-files=all', '--', folder])) {
+    throw new Failure('Каталог снимка содержит локальные изменения.', 'dirty');
+  }
   const before = head ? await readCommit(repo, head, folder) : new Map();
-  if (before.size) assertValid(before);
+  if (before.size) inspectExport(before);
   if (!sameSnapshot(before, await readWorktree(await assertParents(repo, folder)))) {
     throw new Failure('В каталоге снимка есть локальные или игнорируемые файлы.');
   }
   return { head, branch, changes: compare(before, files) };
 }
 export async function writeSnapshot(repo: string, folder: string, files: Files, reviewed: { head: string; branch: string }) {
-  assertValid(files);
+  inspectExport(files);
   const review = await previewWrite(repo, folder, files);
   if (review.head !== reviewed.head || review.branch !== reviewed.branch) throw new Failure('Ветка или HEAD изменились. Повторите просмотр.');
   if (!review.changes.length) return review;
@@ -228,9 +245,8 @@ export async function writeSnapshot(repo: string, folder: string, files: Files, 
     const status = await gitStatus(repo);
     const existing = await readWorktree(target);
     const before = reviewed.head ? await readCommit(repo, reviewed.head, folder) : new Map();
-    const pending = split((await git(repo, ['status', '--porcelain=v1', '-z', '--no-renames', '--untracked-files=all'])).toString('utf8'));
-    const stagePrefix = folder.slice(0, folder.lastIndexOf('/') + 1) + stage.slice(parent.length + 1) + '/';
-    if (status.head !== reviewed.head || status.branch !== reviewed.branch || pending.some(line => !line.startsWith('?? ' + stagePrefix)) || !sameSnapshot(before, existing)) {
+    const pending = await command(repo, ['status', '--porcelain=v1', '--untracked-files=all', '--', folder]);
+    if (status.head !== reviewed.head || status.branch !== reviewed.branch || pending || !sameSnapshot(before, existing)) {
       throw new Failure('Рабочее дерево изменилось во время подготовки записи.');
     }
     try { await fs.rename(target, backup); backedUp = true; }
@@ -255,11 +271,12 @@ export async function commitSnapshot(repo: string, folder: string, message: stri
   if (!message.trim() || message.length > 4000) throw new Failure('Введите сообщение коммита.');
   const { head, branch } = await gitStatus(repo);
   if (head !== reviewed.head || branch !== reviewed.branch) throw new Failure('HEAD изменился после экспорта.');
-  if (await command(repo, ['diff', '--cached', '--name-only'])) throw new Failure('В индексе уже есть изменения. Сохраните их отдельно.');
+  if (await command(repo, ['diff', '--cached', '--name-only', '--', folder])) throw new Failure('В индексе уже есть изменения снимка. Сохраните их отдельно.');
   const files = await readWorktree(await assertParents(repo, folder));
-  assertValid(files);
+  inspectExport(files);
   if (!sameSnapshot(files, reviewed.files)) throw new Failure('Снимок изменился после экспорта.');
   await git(repo, ['add', '--intent-to-add', '--', folder]);
+  await git(repo, ['diff', '--check', '--', folder]);
   await git(repo, ['commit', '--only', '-m', message, '--', folder]);
   return gitStatus(repo);
 }

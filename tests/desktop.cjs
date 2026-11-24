@@ -7,7 +7,7 @@ const { join, resolve } = require('node:path');
 const { once } = require('node:events');
 const { setTimeout: wait } = require('node:timers/promises');
 
-test('packaged mGit adds a Superset application with its Git repository', { timeout: 30_000 }, async t => {
+test('packaged mGit adds a Superset application with its Git repository', { timeout: 60_000 }, async t => {
   const profile = await mkdtemp(join(tmpdir(), 'mgit-desktop-'));
   const repo = join(profile, 'repo');
   await mkdir(repo);
@@ -115,4 +115,30 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   const stored = await readFile(join(profile, 'mgit.json'), 'utf8');
   assert(!stored.includes('assert-dpapi-credential'));
   assert(!stored.includes('assert-dpapi-uri'));
+
+  const rightway = process.env.MGIT_RIGHTWAY_REPO;
+  if (rightway) {
+    await evaluate('document.querySelectorAll("nav button")[1].click()');
+    await evaluate(`(() => {
+      const field = document.querySelector('main input');
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(rightway)});
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    })()`);
+    await evaluate('Array.from(document.querySelectorAll("main button")).find(button => button.textContent === "Открыть").click()');
+    for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".branch-status")?.textContent') !== 'test'; attempt++) await wait(100);
+    assert.equal(await evaluate('document.querySelector(".branch-status")?.textContent'), 'test');
+    await evaluate('Array.from(document.querySelectorAll(".toolbar button")).find(button => button.textContent === "Импорт").click()');
+    for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector("input[list=snapshot-folders]")?.value') !== 'snapshots/test/assets'; attempt++) await wait(100);
+    assert.equal(await evaluate('document.querySelector("input[list=snapshot-folders]")?.value'), 'snapshots/test/assets');
+    await evaluate(`(() => {
+      const options = document.querySelectorAll('main input[type=checkbox]');
+      options[0].click();
+      options[1].click();
+      Array.from(document.querySelectorAll('main button')).find(button => button.textContent === 'Проверить снимок').click();
+    })()`);
+    for (let attempt = 0; attempt < 240 && !(await evaluate('!!document.querySelector("main .counts, [role=alert]")')); attempt++) await wait(100);
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("main .counts strong"), item => Number(item.textContent))'),
+      [2, 1053, 4094, 113, 1]);
+    assert.match(await evaluate('document.querySelector("main details summary")?.textContent'), /182/);
+  }
 });

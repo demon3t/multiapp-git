@@ -9,7 +9,7 @@ export type Secret = { credential: string; connections: Record<string, string> }
 export type Files = Map<string, string>;
 export type Row = Record<string, unknown>;
 export type Asset = { path: string; kind: Kind; uuid: string; name: string; references: string[]; data: Row };
-export type Issue = { path: string; message: string; dashboards?: string[] };
+export type Issue = { path: string; message: string; dashboards?: string[]; dependency?: boolean };
 export type Inspection = { assets: Asset[]; issues: Issue[] };
 export const uuidPattern = /^[\da-f]{8}(?:-[\da-f]{4}){3}-[\da-f]{12}$/i;
 export const normalizeUuid = (value: unknown) => typeof value === 'string' && uuidPattern.test(value) ? value.toLowerCase() : '';
@@ -32,6 +32,7 @@ export function profileUrl(value: string) {
 }
 export interface Adapter {
   download(): Promise<Files>;
+  exportFiles?(): Promise<Files>;
   supportsImport(): Promise<{ version: string }>;
   upload(files: Files, connections: Record<string, string>): Promise<void>;
 }

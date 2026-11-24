@@ -5,10 +5,12 @@ import { randomUUID } from 'node:crypto';
 import { Adapter, Failure, Files, object, Profile, profileUrl, Secret } from './model';
 import { materialize, maxBytes, normalizeExport } from './snapshot';
 import { pack, unpack } from './zip';
+import { batchExport } from './export';
 
 type Result = { status: number; body: Buffer; type: string };
 const exportPath = '/api/v1/assets/export/';
 const importPath = '/api/v1/assets/import/';
+const resourceExports = ['database', 'dataset', 'chart', 'dashboard', 'saved_query'];
 export class Superset implements Adapter {
   private readonly base: string;
   private readonly cookies = new Map<string, string>();
@@ -16,13 +18,15 @@ export class Superset implements Adapter {
   constructor(private readonly profile: Profile, private readonly secret: Secret, private readonly timeout = 60_000) {
     this.base = profileUrl(profile.url);
   }
-  private async request(path: string, method = 'GET', headers: Record<string, string> = {}, body?: Buffer): Promise<Result> {
+  private async request(path: string, method = 'GET', headers: Record<string, string> = {}, body?: Buffer, timeoutCode = 'network'): Promise<Result> {
     const url = new URL(this.base + path);
     const send = url.protocol === 'https:' ? https : http;
     return new Promise((resolve, reject) => {
       const abort = new AbortController();
       const timer = setTimeout(() => abort.abort(), this.timeout);
-      const failure = () => new Failure(abort.signal.aborted ? 'Истекло время ожидания Superset.' : 'Нет соединения с Superset или сертификат TLS не прошёл проверку.', 'network');
+      const failure = () => abort.signal.aborted
+        ? new Failure('Истекло время ожидания Superset.', timeoutCode)
+        : new Failure('Нет соединения с Superset или сертификат TLS не прошёл проверку.', 'network');
       const req = send(url, {
         method, signal: abort.signal,
         ca: this.profile.ca ? [...getCACertificates('default'), this.profile.ca] : undefined,
@@ -81,9 +85,10 @@ export class Superset implements Adapter {
 
   async probe() {
     await this.authenticate();
-    this.check(await this.request('/api/v1/me/'), 'профиль пользователя');
-    const roles = this.json(this.check(await this.request('/api/v1/me/roles/'), 'права пользователя'));
-    const data = object(roles.result ?? roles);
+    const roleResponse = await this.request('/api/v1/me/roles/');
+    // Superset 4.1.x exposes this endpoint only to browser sessions.
+    const roles = roleResponse.status === 401 ? null : this.json(this.check(roleResponse, 'права пользователя'));
+    const data = object(roles?.result ?? roles);
     const names = new Set(Array.isArray(data.roles) ? data.roles.flatMap(role => typeof role === 'string' ? [role] : [object(role).name]) : Object.keys(object(data.roles)));
     const specification = this.json(this.check(await this.request('/api/v1/_openapi'), 'спецификация API'));
     const paths = object(specification.paths);
@@ -102,22 +107,37 @@ export class Superset implements Adapter {
       const match = /(?:&quot;|")version_string(?:&quot;|")\s*:\s*(?:&quot;|")(\d+\.\d+\.\d+(?:[-+.][\w.-]+)?)/.exec(welcome.body.toString());
       if (match) version = match[1];
     }
-    return { version, apiVersion: typeof declared === 'string' ? declared : '', admin: names.has('Admin'),
-      export: Boolean(object(paths[exportPath]).get), import: Boolean(object(paths[importPath]).post) };
+    const batchExport = resourceExports.every(name => Boolean(object(paths['/api/v1/' + name + '/export/']).get));
+    return { version, apiVersion: typeof declared === 'string' ? declared : '', admin: roles && names.has('Admin'),
+      export: batchExport || Boolean(object(paths[exportPath]).get), assetsExport: Boolean(object(paths[exportPath]).get),
+      import: Boolean(object(paths[importPath]).post) };
   }
 
   async supportsImport() {
     const probe = await this.probe();
     if (!probe.admin) throw new Failure('Для подтверждения полного доступа к импорту и проверке объектов нужна роль Admin.', 'permission');
-    if (!probe.import || !probe.export) throw new Failure('Стенд не объявляет штатный импорт и экспорт assets.', 'compatibility');
+    if (!probe.import || !probe.assetsExport) throw new Failure('Стенд не объявляет штатный импорт и экспорт assets.', 'compatibility');
     if (probe.version !== '6.1.0') throw new Failure('Импорт доступен для Superset 6.1.0. Стенд сообщает: ' + (probe.version || 'версия не определена') + '.', 'compatibility');
     return { version: probe.version };
   }
   async download() {
     const probe = await this.probe();
-    if (!probe.admin || !probe.export) throw new Failure('Для подтверждения полноты экспорта нужны assets/export и роль Admin.', 'permission');
+    if (!probe.admin || !probe.assetsExport) throw new Failure('Для подтверждения полноты экспорта нужны assets/export и роль Admin.', 'permission');
     const response = this.check(await this.request(exportPath), 'экспорт assets');
     return unpack(response.body);
+  }
+  async exportFiles() {
+    await this.authenticate();
+    return batchExport(
+      async path => this.json(this.check(await this.request(path), 'список объектов')),
+      async path => {
+        const response = await this.request(path, 'GET', {}, undefined, 'timeout');
+        if ([502, 503, 504].includes(response.status)) {
+          throw new Failure('Шлюз Superset вернул HTTP ' + response.status + ' при выгрузке пакета.', 'export-gateway');
+        }
+        return this.check(response, 'экспорт пакета').body;
+      }
+    );
   }
   async upload(files: Files, connections: Record<string, string>) {
     await this.authenticate();

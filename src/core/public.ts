@@ -10,13 +10,13 @@ export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] }
 export type Context = { repo: string; folder: string; profileId: string };
 export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
 export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
-export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[] };
+export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[]; issues: Issue[] };
 export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[]; excluded: Issue[] };
 export type Verification = { verified: boolean; checked: number; issues: unknown[] };
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
   save: [ProfileInput, ProfileSummary[]];
-  probe: [string, { version: string; apiVersion: string; admin: boolean; export: boolean; import: boolean }];
+  probe: [string, { version: string; apiVersion: string; admin: boolean | null; export: boolean; import: boolean }];
   pickDirectory: [undefined, string];
   open: [string, { repo: string; state: GitState }];
   clone: [{ url: string; path: string }, { repo: string; state: GitState }];
@@ -30,8 +30,9 @@ export type Requests = {
   write: [string, GitState];
   commit: [{ id: string; message: string }, GitState];
   validate: [{ repo: string; folder: string; ref: string; compatibleOnly?: boolean }, { sha: string; counts: Record<string, number>; excluded: Issue[] }];
+  snapshotFolders: [{ repo: string; ref: string }, string[]];
   plan: [Context & { ref: string; compatibleOnly?: boolean }, Plan];
-  verify: [Context & { ref: string }, Verification];
+  verify: [Context & { ref: string; compatibleOnly?: boolean }, Verification];
   apply: [{ id: string; confirm: string; backup: boolean }, Verification];
   history: [undefined, Entry[]];
   updateStatus: [undefined, UpdateView];

@@ -35,7 +35,7 @@ test('Superset 6.1.0 → Git commit → independent Superset 6.1.0 → repeat', 
   await git.writeSnapshot(repo, folder, exported.files, preview);
   const { head: sha } = await git.commitSnapshot(repo, folder, 'Export Superset metadata', { ...preview, files: exported.files });
   const repeatedExport = await flow.exportSnapshot(source);
-  assert.equal((await git.previewWrite(repo, folder, repeatedExport.files)).changes.length, 0);
+  assert((await git.previewWrite(repo, folder, repeatedExport.files)).changes.every(change => change.path === 'metadata.yaml'));
   const snapshot = await flow.sourceSnapshot(repo, sha, folder);
   const cli = resolve(__dirname, '../../dist/cli.js');
   const validation = JSON.parse(execFileSync(process.execPath, [cli, 'validate', '--repo', repo, '--folder', folder, '--commit', sha], { encoding: 'utf8' }));

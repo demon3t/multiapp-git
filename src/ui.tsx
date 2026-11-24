@@ -16,6 +16,7 @@ function Icon({ index }: { index: number }) {
 
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
 const emptyGit: GitState = { branch: '', status: '', head: '', branches: [] };
+const defaultFolder = 'snapshots/superset/assets';
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
 }
@@ -51,7 +52,8 @@ function App() {
   const [git, setGit] = useState(emptyGit);
   const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
   const [newBranch, setNewBranch] = useState('');
-  const [folder, setFolder] = useState('snapshots/superset/assets');
+  const [folderInput, setFolderInput] = useState<string>();
+  const [snapshotFolders, setSnapshotFolders] = useState<{ repo: string; ref: string; head: string; paths: string[] }>();
   const [ref, setRef] = useState('HEAD');
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
@@ -73,6 +75,9 @@ function App() {
   const [token, setToken] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
   const profile = profiles.find(item => item.id === profileId);
+  const folderRef = page === 'Импорт' ? ref : 'HEAD';
+  const paths = snapshotFolders?.repo === repo && snapshotFolders.ref === folderRef && snapshotFolders.head === git.head ? snapshotFolders.paths : [];
+  const folder = folderInput ?? (paths.length === 1 ? paths[0] : defaultFolder);
   const context = { repo, folder, profileId };
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
 
@@ -120,10 +125,18 @@ function App() {
     });
     return () => { active = false; };
   }, [profile?.id, profile?.repo]);
+  useEffect(() => {
+    if (!repo || !git.head || !folderRef.trim()) return;
+    let active = true;
+    void window.mgit.call('snapshotFolders', { repo, ref: folderRef }).then(result => {
+      if (active) setSnapshotFolders({ repo, ref: folderRef, head: git.head, paths: result.ok ? result.data : [] });
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [repo, git.head, git.branches, folderRef]);
   function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
   function chooseProfile(id: string) {
     if (id !== profileId) {
-      setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD');
+      setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD'); setFolderInput(undefined);
     }
     setProfileId(id); setAssets([]); setSelected([]); setCompatibleOnly(false); invalidate();
   }
@@ -140,19 +153,21 @@ function App() {
     void run('save', editor, 'Сохранение профиля', value => {
       const saved = value.at(-1)!;
       if (saved.id === profileId && saved.repo !== profile?.repo) {
-        setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD');
+        setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD'); setFolderInput(undefined);
       }
       setProfiles(value); chooseProfile(saved.id); setEditor({ ...emptyProfile });
       navigate('Приложения'); setMessage('Приложение сохранено.');
     });
   }
   function setOpened(result: { repo: string; state: GitState }) {
-    if (profile?.repo && profile.repo !== result.repo) {
-      setRepoInput(result.repo);
-      setMessage('Репозиторий готов: ' + result.repo + '. Его можно выбрать при добавлении приложения.');
-      return;
-    }
+    if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); }
     setRepo(result.repo); setRepoInput(result.repo); setGit(result.state); setGitDiff(undefined); invalidate(); setMessage('Репозиторий открыт.');
+  }
+  function selectApplication(application: ProfileSummary) {
+    chooseProfile(application.id);
+    if (application.id === profileId && application.repo && !applicationReady) {
+      void run('open', application.repo, 'Открытие репозитория приложения', setOpened);
+    }
   }
   function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
@@ -165,8 +180,9 @@ function App() {
     <label>Репозиторий<div className="readout" title={repo}>{repo || 'Откройте репозиторий'}</div></label>
     <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
       {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
-    <label>Каталог снимка<input value={folder} onChange={e => { setFolder(e.target.value); invalidate(); }}/></label>
+    <label>Каталог снимка<input value={folder} list="snapshot-folders" onChange={e => { setFolderInput(e.target.value); invalidate(); }}/></label>
     <datalist id="refs">{git.branches.map(name => <option key={name} value={name}/>)}</datalist>
+    <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
   </div>;
 
   return <div className="shell">
@@ -174,7 +190,7 @@ function App() {
       <button className="brand" onClick={() => navigate('Приложения')} disabled={!!busy}><strong>mGit</strong></button>
       <div className="app-tabs" aria-label="Открытые приложения">
         {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId}
-          disabled={!!busy} onClick={() => { chooseProfile(item.id); if (page === 'Настройки') navigate('Приложения'); }}
+          disabled={!!busy} onClick={() => { selectApplication(item); if (page === 'Настройки') navigate('Приложения'); }}
           title={item.url}><Icon index={0}/>{item.name}</button>)}
       </div>
       <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
@@ -219,7 +235,7 @@ function App() {
       <button disabled={!repo || !git.head || !git.branch || !!busy} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>↑ Push</button>
       <button disabled={!repo || !!busy} onClick={() => run('status', repo, 'Получение статуса', setGit)}>↻ Обновить</button>
       <button disabled={!applicationReady || !!busy} onClick={() => navigate('Экспорт')}><Icon index={2}/>Экспорт</button>
-      <button disabled={!applicationReady || !!busy} onClick={() => navigate('Импорт')}><Icon index={3}/>Импорт</button>
+      <button disabled={!repo || !!busy} onClick={() => navigate('Импорт')}><Icon index={3}/>Импорт</button>
     </div>
     <aside>
       <nav aria-label="Разделы">{pages.map((name, index) => <button disabled={!!busy} className={page === name ? 'current' : ''} key={name} onClick={() => navigate(name)}>
@@ -244,9 +260,9 @@ function App() {
           <div className="section-title"><h2>Подключённые приложения</h2><button className="primary" onClick={() => editApplication()}>Добавить приложение</button></div>
           {profiles.length === 0 ? <p className="empty">Добавьте приложение и выберите папку его Git-репозитория.</p> :
             <div className="profile-list">{profiles.map(item => <div className={'profile-row ' + (item.id === profileId ? 'selected' : '')} key={item.id}>
-              <button className="profile-select" onClick={() => chooseProfile(item.id)}><strong>{item.name}</strong><span>Apache Superset · {item.url}</span><span>{item.repo || 'Укажите папку Git'}</span></button>
+              <button className="profile-select" onClick={() => selectApplication(item)}><strong>{item.name}</strong><span>Apache Superset · {item.url}</span><span>{item.repo || 'Укажите папку Git'}</span></button>
               <button onClick={() => run('probe', item.id, 'Проверка стенда', data => setMessage(
-                'Superset ' + (data.version || '· версия не определена') + '. Admin: ' + (data.admin ? 'да' : 'нет') +
+                'Superset ' + (data.version || '· версия не определена') + '. Admin: ' + (data.admin === null ? 'роль не определена' : data.admin ? 'да' : 'нет') +
                 '. API экспорта: ' + (data.export ? 'да' : 'нет') + '. API импорта: ' + (data.import ? 'да' : 'нет') + '.'
               ))}>Проверить</button>
               <button onClick={() => editApplication(item)}>Изменить</button>
@@ -316,7 +332,10 @@ function App() {
           onClick={() => { invalidate(); void run('exportPreview', { ...context, selected: partial ? selected : [] }, 'Экспорт и проверка YAML', setPreview); }}>Подготовить экспорт</button></div>
       </section>
       {preview && <section className="panel"><h2>Изменения снимка</h2><Counts values={preview.counts}/>
-        <p className="hint">Проверки формата, зависимостей и секретов пройдены. Файлов с изменениями: {preview.changes.length}.</p>
+        <p className="hint">Файлов с изменениями: {preview.changes.length}.</p>
+        {preview.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {preview.issues.length}</summary>
+          <div className="asset-list">{preview.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
+        </details>}
         <Changes key={preview.id} changes={preview.changes}/>
         <div className="actions"><button className="primary" disabled={written || !preview.changes.length}
           onClick={() => run('write', preview.id, 'Запись снимка', state => { setGit(state); setWritten(true); setMessage('Снимок записан.'); })}>Записать снимок</button></div>
@@ -332,7 +351,7 @@ function App() {
           onClick={() => run('validate', { repo, ref, folder, compatibleOnly }, 'Локальная проверка', result => { setValidation(result); setMessage(result.excluded.length ? 'Совместимая часть прошла локальную проверку.' : 'Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
           {!only && <><button className="primary" disabled={!applicationReady || !ref.trim()} onClick={() => {
             setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref, compatibleOnly }, 'Подготовка плана импорта', setPlan);
-          }}>Построить план</button><button disabled={!applicationReady || !ref.trim()} onClick={() => run('verify', { ...context, ref }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
+          }}>Построить план</button><button disabled={!applicationReady || !ref.trim()} onClick={() => run('verify', { ...context, ref, compatibleOnly }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
         </div>
         {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/><Exclusions items={validation.excluded}/></>}
       </section>

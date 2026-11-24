@@ -37,11 +37,13 @@ test('blocks secret fields, unsafe attachments and incompatible versions', () =>
   const raw = fixture();
   raw.set(path.database, raw.get(path.database).replace('sqlite:///mgit-unconfigured.db', 'postgresql://source:example@source.local/analytics'));
   const normalized = normalizeExport(raw);
+  normalized.set('metadata.yaml', normalized.get('metadata.yaml') + 'timestamp: 2026-11-24T17:07:33.291Z\n');
   assertValid(normalized);
   assert(!normalized.get(path.database).includes('source.local'));
   const { output, passwords } = materialize(normalized, { [ids.database]: 'postgresql://target:pass%401@target.local/db' });
   assert.equal(passwords[path.database], 'pass@1');
   assert.match(output.get(path.database), /target.local/);
+  assert.match(output.get('metadata.yaml'), /^timestamp: "2026-11-24T17:07:33\.291Z"$/m);
   assert(!normalized.get(path.database).includes('target.local'));
 });
 
@@ -62,7 +64,7 @@ test('accepts large snapshots and lists exclusions for explicit partial import',
   assert.throws(() => compatibleSnapshot(files), { code: 'validation' });
 });
 
-test('requires clean Git and preserves paths outside snapshot', async t => {
+test('preserves staged and unstaged paths outside snapshot', async t => {
   const repo = await mkdtemp(join(tmpdir(), 'mgit-git-test-'));
   t.after(() => rm(repo, { recursive: true, force: true }));
   const run = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
@@ -76,21 +78,25 @@ test('requires clean Git and preserves paths outside snapshot', async t => {
   run('commit', '-m', 'initial');
   const folder = 'snapshots/test/assets';
   const files = fixture();
+  assert.deepEqual(await git.snapshotFolders(repo, 'HEAD'), []);
   const preview = await git.previewWrite(repo, folder, files);
   await writeFile(join(repo, 'README.md'), 'changed');
-  await assert.rejects(git.writeSnapshot(repo, folder, files, preview), { code: 'dirty' });
-  assert.equal(await readFile(join(repo, 'README.md'), 'utf8'), 'changed');
-  await writeFile(join(repo, 'README.md'), 'initial');
+  run('add', 'README.md');
+  await writeFile(join(repo, 'notes.txt'), 'work in progress');
   await git.writeSnapshot(repo, folder, files, preview);
   const result = await git.commitSnapshot(repo, folder, 'Export', { ...preview, files });
-  assert.equal(result.status, '');
+  assert.match(result.status, /M  README\.md/);
+  assert.match(result.status, /\?\? notes\.txt/);
+  assert.equal(run('show', 'HEAD:README.md').toString(), 'initial');
   assert.deepEqual(await git.readCommit(repo, result.head, folder), files);
+  assert.deepEqual(await git.snapshotFolders(repo, 'main'), [folder]);
+  assert.deepEqual(await git.snapshotFolders(repo, 'HEAD~1'), []);
   assert.equal((await git.previewWrite(repo, folder, files)).changes.length, 0);
   await mkdir(join(repo, folder, 'datasets', 'ignored'), { recursive: true });
   await writeFile(join(repo, folder, 'datasets', 'ignored', 'unrelated.txt'), 'keep');
   await assert.rejects(git.previewWrite(repo, folder, files), { code: 'dirty' });
   assert.equal(await readFile(join(repo, folder, 'datasets', 'ignored', 'unrelated.txt'), 'utf8'), 'keep');
-  assert.equal(await readFile(join(repo, 'README.md'), 'utf8'), 'initial');
+  assert.equal(await readFile(join(repo, 'README.md'), 'utf8'), 'changed');
 });
 
 test('Superset handles expired token and network timeout', async t => {
