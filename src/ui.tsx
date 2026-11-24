@@ -2,6 +2,7 @@ import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
+import { UpdateDialog } from './update-dialog';
 
 declare global { interface Window { mgit: Bridge } }
 const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
@@ -74,6 +75,8 @@ function App() {
   const [update, setUpdate] = useState<UpdateView>();
   const [token, setToken] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
+  const [updateDialog, setUpdateDialog] = useState(false);
+  const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
   const paths = snapshotFolders?.repo === repo && snapshotFolders.ref === folderRef && snapshotFolders.head === git.head ? snapshotFolders.paths : [];
@@ -196,9 +199,13 @@ function App() {
       <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
       <div className="title-drag"/>
       <div className="updates-menu">
-        <button className={update?.status === 'available' ? 'primary' : 'updates-toggle'} aria-expanded={updateMenu}
+        {updateAvailable && <button className="primary" onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>
+          {update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' :
+            update?.status === 'ready' ? 'Обновление готово' : update?.status === 'installing' ? 'Установка…' : 'Обновить'}
+        </button>}
+        <button className="updates-toggle" aria-expanded={updateMenu}
           onClick={() => setUpdateMenu(!updateMenu)}>
-          {update?.status === 'available' ? 'Доступна ' + update.latest : 'Обновления'} ▾
+          Обновления ▾
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
           <h2>mGit {update?.current}</h2>
@@ -211,8 +218,7 @@ function App() {
           }[update?.status ?? 'idle'])}</p>
           <div className="actions">
             <button disabled={!!busy || update?.status === 'checking'} onClick={() => run('checkUpdate', undefined, 'Проверка обновлений', setUpdate)}>Проверить сейчас</button>
-            {update?.canInstall && ['available', 'ready'].includes(update.status) &&
-              <button className="primary" disabled={!!busy} onClick={() => run('installUpdate', undefined, 'Обновление mGit', setUpdate)}>Обновить и перезапустить</button>}
+            {updateAvailable && <button onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>Что нового</button>}
             <button onClick={() => run('openReleases', undefined, 'Открытие GitHub')}>Релизы на GitHub</button>
           </div>
           <label className="check"><input type="checkbox" checked={update?.automatic === true} disabled={!!busy} onChange={e =>
@@ -235,8 +241,20 @@ function App() {
             </div>
           </form>
         </section>}
+        {update?.askPermission && !updateMenu && <section className="updates-panel" aria-labelledby="update-permission">
+          <h2 id="update-permission">Проверять обновления автоматически?</h2>
+          <p>mGit сможет проверять новые версии ежедневно, пока приложение открыто.</p>
+          <div className="actions">
+            <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', result => {
+              setUpdate(result);
+              if (!result.hasToken) setUpdateMenu(true);
+            })}>Разрешить</button>
+            <button disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: false }, 'Сохранение настроек', setUpdate)}>Нет, спасибо</button>
+          </div>
+        </section>}
       </div>
     </div>
+    {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
     <div className="toolbar">
       <button disabled={!repo || !!busy} onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>↓ Fetch</button>
       <button disabled={!repo || !git.head || !git.branch || !!busy} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>↑ Push</button>

@@ -9,7 +9,7 @@ import * as git from './core/git';
 import { Superset } from './core/superset';
 import { prepareSnapshot, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
-import { checkRelease, downloadInstaller, releasesPage, UpdateStatus } from './core/updates';
+import { checkRelease, downloadInstaller, releaseChanges, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
 type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean; encryptedToken?: string } };
@@ -30,7 +30,8 @@ const updatesSupported = () => app.isPackaged && process.platform === 'win32' &&
 const updateView = () => {
   const { asset, ...status } = releaseStatus;
   return { ...status, canInstall: Boolean(asset && updatesSupported()), automatic: state.updates?.automatic,
-    autoInstall: state.updates?.autoInstall, hasToken: Boolean(state.updates?.encryptedToken) };
+    autoInstall: state.updates?.autoInstall, hasToken: Boolean(state.updates?.encryptedToken),
+    askPermission: updatesSupported() && state.updates?.automatic === undefined };
 };
 function updateToken() {
   const encrypted = state.updates?.encryptedToken;
@@ -43,7 +44,7 @@ function reportUpdate() {
 }
 function scheduleUpdate(delay: number) {
   clearTimeout(updateTimer);
-  if (state.updates?.automatic) updateTimer = setTimeout(() => void checkUpdate(), delay);
+  if (state.updates?.automatic && state.updates.encryptedToken) updateTimer = setTimeout(() => void checkUpdate(), delay);
 }
 function checkUpdate() {
   if (updateCheck) return updateCheck;
@@ -235,6 +236,13 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   history: () => state.history,
   updateStatus: updateView,
   checkUpdate,
+  async updateChanges() {
+    try {
+      return await releaseChanges(app.getVersion(), releaseStatus.latest ?? '', updateToken(), (url, options) => net.fetch(url, options));
+    } catch {
+      throw new Failure('Не удалось загрузить список изменений.');
+    }
+  },
   async installUpdate() {
     if (busy || launchingInstaller) throw new Failure('Дождитесь завершения текущей операции.');
     await fetchUpdate();
@@ -267,7 +275,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'installUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',

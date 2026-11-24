@@ -5,11 +5,15 @@ import { join } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 
 export const releasesPage = 'https://github.com/demon3t/multiapp-git/releases';
-const api = 'https://api.github.com/repos/demon3t/multiapp-git/releases';
+const repositoryApi = 'https://api.github.com/repos/demon3t/multiapp-git';
+const api = repositoryApi + '/releases';
 export const installerName = 'mGit-Windows-x64-Setup.exe';
 const maxInstallerBytes = 512 * 1024 * 1024;
 type Asset = { id: number; size: number; digest: string };
 type Request = (url: string, options: RequestInit) => Promise<Response>;
+const changeGroups = ['New', 'Improved', 'Fixed'] as const;
+type ChangeGroup = typeof changeGroups[number];
+export type UpdateChanges = Record<ChangeGroup, string[]>;
 
 export type UpdateStatus = {
   current: string;
@@ -58,6 +62,33 @@ export async function checkRelease(current: string, token: string, request: Requ
   } catch {
     return { current, status: 'error', message: 'Не удалось связаться с GitHub. Проверьте подключение и повторите попытку.' };
   }
+}
+
+export async function releaseChanges(current: string, latest: string, token: string, request: Request): Promise<UpdateChanges> {
+  const groups: UpdateChanges = { New: [], Improved: [], Fixed: [] };
+  if (!valid(current) || !valid(latest) || !gt(latest, current)) return groups;
+  const response = await request(repositoryApi + '/contents/changelog/ru.md?ref=' + encodeURIComponent('v' + latest), {
+    headers: githubHeaders(current, token, 'application/vnd.github.raw+json'),
+    signal: AbortSignal.timeout(15_000), redirect: 'error'
+  });
+  if (response.status === 404) return groups;
+  if (!response.ok) throw new Error('GitHub вернул HTTP ' + response.status + '.');
+  const latestBase = latest.replace(/-build\.\d+$/, '');
+  let included = false;
+  let group: ChangeGroup | undefined;
+  for (const line of (await response.text()).split(/\r?\n/)) {
+    if (line.startsWith('## ')) {
+      const version = valid(line.slice(3).split(/\s+/, 1)[0]);
+      included = Boolean(version && gt(version, current) && !gt(version, latestBase) &&
+        version !== current.replace(/-build\.\d+$/, ''));
+      group = undefined;
+    } else if (line.startsWith('### ')) {
+      group = changeGroups.find(value => value === line.slice(4).trim());
+    } else if (included && group && line.startsWith('- ')) {
+      groups[group].push(line.slice(2).trim());
+    }
+  }
+  return groups;
 }
 
 export async function downloadInstaller(

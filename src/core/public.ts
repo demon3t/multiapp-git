@@ -1,9 +1,9 @@
 import type { Change } from './git';
 import type { Environment, Issue, Profile } from './model';
-import type { UpdateStatus } from './updates';
+import type { UpdateChanges, UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
-export type UpdateView = Omit<UpdateStatus, 'asset'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; hasToken: boolean };
+export type UpdateView = Omit<UpdateStatus, 'asset'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; hasToken: boolean; askPermission: boolean };
 export type GitState = { branch: string; status: string; head: string; branches: string[] };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
@@ -37,6 +37,7 @@ export type Requests = {
   history: [undefined, Entry[]];
   updateStatus: [undefined, UpdateView];
   checkUpdate: [undefined, UpdateView];
+  updateChanges: [undefined, UpdateChanges];
   installUpdate: [undefined, UpdateView];
   saveUpdateSettings: [{ automatic: boolean; autoInstall?: boolean; token?: string; clearToken?: boolean }, UpdateView];
   openReleases: [undefined, void];

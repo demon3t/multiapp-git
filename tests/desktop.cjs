@@ -66,6 +66,12 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.equal(titleBar.y, 0);
   assert.equal(titleBar.height, titleBar.barHeight);
   assert(titleBar.reserved > 0);
+  for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector("#update-permission")')); attempt++) await wait(100);
+  assert.match(await evaluate('document.querySelector("#update-permission")?.textContent'), /автоматически/);
+  await evaluate('Array.from(document.querySelectorAll(".updates-panel button")).find(button => button.textContent === "Нет, спасибо").click()');
+  for (let attempt = 0; attempt < 30 && await evaluate('!!document.querySelector("#update-permission")'); attempt++) await wait(100);
+  assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.automatic, false);
+  assert.equal(await evaluate('!!document.querySelector("#update-permission")'), false);
   await evaluate('document.querySelector(".updates-toggle").click()');
   assert.match(await evaluate('document.querySelector(".updates-panel")?.textContent'), /Проверить сейчас/);
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'idle');
