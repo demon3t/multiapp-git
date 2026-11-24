@@ -81,12 +81,22 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
     'PULL', 'FETCH', 'PUSH'
   ]);
-  await evaluate('document.querySelector(".repo-menu-trigger").click()');
+  await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Файл")).click()');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".repo-menu-panel button"), x => x.textContent)'), [
     'Инициализировать репозиторий', 'Открыть репозиторий', 'Клонировать репозиторий'
   ]);
   await evaluate('document.querySelector(".repo-menu-panel button:last-child").click()');
   assert.equal(await evaluate('document.querySelector("main .panel h2")?.textContent'), 'Клонировать репозиторий');
+  await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Приложение")).click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelector(".app-menu-panel").children).map(x => x.textContent)'), ['История операций', '', 'Настройки']);
+  assert.equal(await evaluate('document.querySelector(".app-menu-panel [role=separator]")?.className'), 'menu-separator');
+  await evaluate('document.querySelector(".app-menu-panel button:first-child").click()');
+  assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'История операций');
+  for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".app-menu button").disabled'); attempt++) await wait(100);
+  await evaluate('document.querySelector(".app-menu button").click()');
+  await evaluate('document.querySelector(".app-menu-panel button:last-child").click()');
+  assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Настройки');
+  await evaluate('document.querySelector(".brand").click()');
   const initialized = await evaluate('window.mgit.call("init", ' + JSON.stringify(join(profile, 'initialized')) + ')');
   assert.equal(initialized.ok, true, JSON.stringify(initialized));
   assert.equal(initialized.data.state.branch, 'main');

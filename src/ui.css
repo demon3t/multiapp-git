@@ -32,11 +32,12 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 .app-tabs button{display:flex;align-items:center;gap:6px;flex:0 0 auto;max-width:260px;overflow:hidden;text-overflow:ellipsis;border-radius:4px 4px 0 0;background:#edf0f5;border-color:#c9cfd9;border-bottom:0}
 .app-tabs button[aria-pressed=true]{background:#fafbfc;color:#15549e;border-top:2px solid #3e86d4}
 .toolbar .new-tab{border:0;background:transparent;font-size:19px;padding:0 7px}
-.repo-menu{position:relative;flex:none}
+.repo-menu,.app-menu{position:relative;flex:none}
 .repo-menu-trigger{background:transparent;border:0;color:#354253;font-weight:600;padding:7px 9px}
 .repo-menu-panel{position:absolute;z-index:8;left:0;top:calc(100% + 4px);width:230px;padding:4px;background:#fff;border:1px solid #c5cbd4;border-radius:5px;box-shadow:0 6px 20px #24385526}
 .repo-menu-panel button{display:block;width:100%;text-align:left;background:transparent;border:0;border-radius:3px;padding:8px 9px;color:#26364d}
 .repo-menu-panel button:hover{background:#e7eff9;color:#124c8c}
+.menu-separator{height:1px;background:#d5dae3;margin:4px 6px}
 .toolbar{background:#fafbfc;border-bottom:1px solid #cbd1db;gap:3px;padding:0 8px}
 .toolbar .new-tab{display:flex;align-items:center;flex:none}
 .toolbar button:hover:not(:disabled){background:#e7eff9;border-color:#c1d4ea}
@@ -76,7 +77,7 @@ input:not([type=checkbox]),select,textarea,.readout{min-height:31px;padding:5px 
 .statusbar{background:#edf0f4;border-top:1px solid #cdd3dc;padding:0 10px;gap:14px;font-size:11px;color:#485365}
 .branch-status{display:flex;align-items:center;gap:5px}.tree-status{margin-left:auto}
 .tabbar{padding-right:calc(5px + 100% - env(titlebar-area-width, 100%));-webkit-app-region:drag}
-.tabbar button,.app-tabs,.updates-menu,.repo-menu{-webkit-app-region:no-drag}
+.tabbar button,.app-tabs,.updates-menu,.repo-menu,.app-menu{-webkit-app-region:no-drag}
 .title-drag{flex:1;min-width:18px}
 .updates-menu{position:relative;flex:none}
 .updates-toggle{background:transparent;border-color:transparent}

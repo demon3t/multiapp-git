@@ -89,6 +89,7 @@ function App() {
   const [updateMenu, setUpdateMenu] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
   const [repoMenu, setRepoMenu] = useState(false);
+  const [appMenu, setAppMenu] = useState(false);
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -128,13 +129,15 @@ function App() {
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
   }, [updateMenu]);
   useEffect(() => {
-    if (!repoMenu) return;
+    if (!repoMenu && !appMenu) return;
     function close(event: PointerEvent | KeyboardEvent) {
-      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.repo-menu')) setRepoMenu(false);
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.repo-menu, .app-menu')) {
+        setRepoMenu(false); setAppMenu(false);
+      }
     }
     window.addEventListener('pointerdown', close); window.addEventListener('keydown', close);
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
-  }, [repoMenu]);
+  }, [repoMenu, appMenu]);
   useEffect(() => {
     if (!profile?.repo) return;
     let active = true;
@@ -230,11 +233,19 @@ function App() {
     <div className="tabbar">
       <button className="brand" onClick={() => navigate('Приложения')} disabled={!!busy}><strong>mGit</strong></button>
       <div className="repo-menu">
-        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => setRepoMenu(!repoMenu)}>Репозиторий ▾</button>
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => { setAppMenu(false); setRepoMenu(!repoMenu); }}>Файл ▾</button>
         {repoMenu && <div className="repo-menu-panel">
           <button onClick={() => openDirectory('init')}>Инициализировать репозиторий</button>
           <button onClick={() => openDirectory('open')}>Открыть репозиторий</button>
           <button onClick={() => { setRepoMenu(false); setRepoInput(''); setRemote(''); setCloning(true); navigate('Репозитории'); }}>Клонировать репозиторий</button>
+        </div>}
+      </div>
+      <div className="app-menu">
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={appMenu} onClick={() => { setRepoMenu(false); setAppMenu(!appMenu); }}>Приложение ▾</button>
+        {appMenu && <div className="repo-menu-panel app-menu-panel">
+          <button onClick={() => { setAppMenu(false); navigate('История операций'); }}>История операций</button>
+          <div className="menu-separator" role="separator"/>
+          <button onClick={() => { setAppMenu(false); editApplication(profile); }}>Настройки</button>
         </div>}
       </div>
       <div className="title-drag"/>
