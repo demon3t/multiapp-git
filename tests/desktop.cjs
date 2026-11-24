@@ -81,6 +81,17 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
     'PULL', 'FETCH', 'PUSH'
   ]);
+  await evaluate('document.querySelector(".repo-menu-trigger").click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".repo-menu-panel button"), x => x.textContent)'), [
+    'Инициализировать репозиторий', 'Открыть репозиторий', 'Клонировать репозиторий'
+  ]);
+  await evaluate('document.querySelector(".repo-menu-panel button:last-child").click()');
+  assert.equal(await evaluate('document.querySelector("main .panel h2")?.textContent'), 'Клонировать репозиторий');
+  const initialized = await evaluate('window.mgit.call("init", ' + JSON.stringify(join(profile, 'initialized')) + ')');
+  assert.equal(initialized.ok, true, JSON.stringify(initialized));
+  assert.equal(initialized.data.state.branch, 'main');
+  assert.equal(initialized.data.state.head, '');
+  assert.deepEqual(await evaluate('window.mgit.call("open", ' + JSON.stringify(initialized.data.repo) + ')'), initialized);
   assert.equal(await evaluate('document.querySelectorAll("nav button").length'), 0);
   await evaluate('document.querySelector(".new-tab").click()');
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector("form")')); attempt++) await wait(100);

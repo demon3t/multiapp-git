@@ -168,6 +168,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   profiles: listProfiles, save, probe: id => profileFor(id).adapter.probe(),
   async pickDirectory() { return (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0] ?? ''; },
   async open(path) { const repo = await git.openRepoRoot(path); return { repo, state: await git.gitStatus(repo) }; },
+  async init(path) { const repo = await git.initRepo(path); return { repo, state: await git.gitStatus(repo) }; },
   async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
   fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,

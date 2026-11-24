@@ -58,7 +58,9 @@ function App() {
   const [profileId, setProfileId] = useState('');
   const [editor, setEditor] = useState<ProfileInput>({ ...emptyProfile });
   const [repo, setRepo] = useState('');
+  const [openedRepos, setOpenedRepos] = useState<string[]>([]);
   const [repoInput, setRepoInput] = useState('');
+  const [cloning, setCloning] = useState(false);
   const [remote, setRemote] = useState('');
   const [git, setGit] = useState(emptyGit);
   const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
@@ -86,6 +88,7 @@ function App() {
   const [token, setToken] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
+  const [repoMenu, setRepoMenu] = useState(false);
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -95,13 +98,13 @@ function App() {
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
 
   async function run<K extends keyof Requests>(
-    method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void
+    method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void | Promise<void>
   ) {
     if (busy) return;
     setBusy(title); setError(undefined); setMessage('');
     try {
       const result = await window.mgit.call(method, input);
-      if (result.ok) complete?.(result.data);
+      if (result.ok) await complete?.(result.data);
       else setError({ message: result.message, details: result.details });
     } catch { setError({ message: 'Связь с процессом mGit прервалась.' }); }
     finally { setBusy(''); }
@@ -124,6 +127,14 @@ function App() {
     window.addEventListener('keydown', close);
     return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
   }, [updateMenu]);
+  useEffect(() => {
+    if (!repoMenu) return;
+    function close(event: PointerEvent | KeyboardEvent) {
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.repo-menu')) setRepoMenu(false);
+    }
+    window.addEventListener('pointerdown', close); window.addEventListener('keydown', close);
+    return () => { window.removeEventListener('pointerdown', close); window.removeEventListener('keydown', close); };
+  }, [repoMenu]);
   useEffect(() => {
     if (!profile?.repo) return;
     let active = true;
@@ -174,7 +185,24 @@ function App() {
   }
   function setOpened(result: { repo: string; state: GitState }) {
     if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); }
+    const linkedProfile = profiles.find(item => item.repo === result.repo);
+    if (linkedProfile && !profiles.some(item => item.id === profileId && item.repo === result.repo)) {
+      setProfileId(linkedProfile.id);
+      setAssets([]); setSelected([]); setCompatibleOnly(false);
+    }
+    setOpenedRepos(paths => paths.includes(result.repo) ? paths : [...paths, result.repo]);
+    setCloning(false);
     setRepo(result.repo); setRepoInput(result.repo); setGit(result.state); setGitDiff(undefined); invalidate(); setMessage('Репозиторий открыт.');
+  }
+  function openDirectory(method: 'init' | 'open') {
+    setRepoMenu(false);
+    void run('pickDirectory', undefined, 'Выбор каталога Git', async path => {
+      if (!path) return;
+      await run(method, path, method === 'init' ? 'Инициализация репозитория' : 'Открытие репозитория', result => {
+        navigate('Репозитории');
+        setOpened(result);
+      });
+    });
   }
   function selectApplication(application: ProfileSummary) {
     chooseProfile(application.id);
@@ -201,12 +229,14 @@ function App() {
   return <div className="shell">
     <div className="tabbar">
       <button className="brand" onClick={() => navigate('Приложения')} disabled={!!busy}><strong>mGit</strong></button>
-      <div className="app-tabs" aria-label="Открытые приложения">
-        {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId}
-          disabled={!!busy} onClick={() => { selectApplication(item); if (page === 'Настройки') navigate('Приложения'); }}
-          title={item.url}><Icon index={0}/>{item.name}</button>)}
+      <div className="repo-menu">
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => setRepoMenu(!repoMenu)}>Репозиторий ▾</button>
+        {repoMenu && <div className="repo-menu-panel">
+          <button onClick={() => openDirectory('init')}>Инициализировать репозиторий</button>
+          <button onClick={() => openDirectory('open')}>Открыть репозиторий</button>
+          <button onClick={() => { setRepoMenu(false); setRepoInput(''); setRemote(''); setCloning(true); navigate('Репозитории'); }}>Клонировать репозиторий</button>
+        </div>}
       </div>
-      <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
       <div className="title-drag"/>
       <div className="updates-menu">
         {updateAvailable && <button className="primary" onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>
@@ -265,7 +295,19 @@ function App() {
       </div>
     </div>
     {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
-    <div className="toolbar"><span className="toolbar-repo" title={repo}>{repo ? repositoryName(repo) : 'Репозиторий не открыт'}</span><span className="toolbar-branch">{git.branch || '—'}</span></div>
+    <div className="toolbar">
+      <div className="app-tabs" aria-label="Подключённые репозитории">
+        {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId && applicationReady}
+          disabled={!!busy} onClick={() => { selectApplication(item); navigate('Приложения'); }}
+          title={item.repo || item.url}><Icon index={0}/>{item.name}</button>)}
+        {openedRepos.filter(path => !profiles.some(item => item.repo === path)).map(path =>
+          <button key={path} aria-pressed={path === repo} disabled={!!busy} title={path}
+            onClick={() => { setCloning(false); navigate('Репозитории'); if (path !== repo) void run('open', path, 'Открытие репозитория', setOpened); }}>
+            <Icon index={1}/>{repositoryName(path)}
+          </button>)}
+      </div>
+      <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
+    </div>
     <aside>
       <div className="operation-group" aria-label="Git операции">
         <button className="operation" title="Pull" aria-label="Pull" disabled={!repo || !git.branch || !!busy}
@@ -340,12 +382,11 @@ function App() {
         </form>
       </section>}
       {page === 'Репозитории' && <>
-        <details className="panel" open={profile?.repo ? undefined : true}><summary>Открыть или клонировать репозиторий</summary><div className="form-grid">
+        {cloning && <section className="panel"><h2>Клонировать репозиторий</h2><div className="form-grid">
           <label className="wide">Локальный путь<input value={repoInput} onChange={e => setRepoInput(e.target.value)} placeholder="D:\repos\superset-config"/></label>
-          <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button>
-            <button className="primary" disabled={!repoInput} onClick={() => run('open', repoInput, 'Открытие репозитория', setOpened)}>Открыть</button></div>
+          <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button></div>
           <label className="wide">HTTPS URL для клонирования<input value={remote} placeholder="https://devops.example.com/Collection/Project/_git/Repository" onChange={e => setRemote(e.target.value)}/></label>
-        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></details>
+        </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></section>}
         {repo && <section className="panel"><h2>Рабочее дерево</h2>
           <p className="hint" title={repo}>{repo}</p>
           <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>

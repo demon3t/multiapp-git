@@ -19,6 +19,7 @@ export type Requests = {
   probe: [string, { version: string; apiVersion: string; admin: boolean | null; export: boolean; import: boolean }];
   pickDirectory: [undefined, string];
   open: [string, { repo: string; state: GitState }];
+  init: [string, { repo: string; state: GitState }];
   clone: [{ url: string; path: string }, { repo: string; state: GitState }];
   status: [string, GitState];
   diff: [string, { staged: string; unstaged: string }];

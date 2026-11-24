@@ -46,6 +46,18 @@ export async function openRepoRoot(path: string) {
   if (root !== selected) throw new Failure('Выберите корень отдельного Git-репозитория. Выбранная папка находится внутри другого репозитория.', 'git');
   return root;
 }
+export async function initRepo(path: string) {
+  if (!path.trim()) throw new Failure('Выберите папку для репозитория.');
+  const target = resolve(path);
+  await fs.mkdir(target, { recursive: true });
+  const existing = await openRepo(target).catch(() => undefined);
+  if (existing) {
+    if (existing === await fs.realpath(target)) return existing;
+    throw new Failure('Выберите папку вне существующего репозитория.', 'git');
+  }
+  await git(target, ['init', '-b', 'main']);
+  return openRepoRoot(target);
+}
 export async function cloneRepo(url: string, folder: string) {
   let remote: URL;
   try { remote = new URL(url); } catch { throw new Failure('Укажите HTTPS URL Git.'); }
