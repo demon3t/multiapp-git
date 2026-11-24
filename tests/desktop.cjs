@@ -268,23 +268,37 @@ test('packaged mGit switches Git branches and runs Superset operations in one cl
   assert.equal(await evaluate(branchStatus), 'test/remote');
   assert.equal(git('rev-parse', '--symbolic-full-name', '@{upstream}').toString().trim(), 'refs/remotes/origin/test/remote');
   assert.match(await readFile(join(repo, 'README.md'), 'utf8'), /Local snapshots/);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-ref[aria-current=true]"), button => [button.title.split(" · ")[0], button.querySelector(".branch-current")?.textContent])'),
+    [['refs/heads/test/remote', 'Текущая']]);
 
   await evaluate('document.querySelector(".operation[aria-label=Export]").click()');
-  for (let attempt = 0; attempt < 50 && !(await evaluate('!!document.querySelector(".diff-files")')); attempt++) await wait(100);
-  assert.equal(await evaluate('document.querySelector("h1").textContent'), 'Экспорт');
-  assert.equal(await evaluate('!!document.querySelector(".diff-files")'), true, await evaluate('document.querySelector("main")?.innerText?.slice(0, 400)'));
-  assert.doesNotMatch(await evaluate('document.querySelector("main").innerText'), /Каталог снимка|Репозиторий|Рабочая ветка|^Superset$/m);
+  const exportSuccess = 'document.querySelector("main .notice.success")?.textContent';
+  for (let attempt = 0; attempt < 50 && await evaluate(exportSuccess) !== 'Снимок записан в рабочее дерево.'; attempt++) await wait(100);
+  assert.equal(await evaluate(exportSuccess), 'Снимок записан в рабочее дерево.');
+  assert.equal(await evaluate('document.querySelector("main").classList.contains("history-page")'), true);
   assert.match(await readFile(join(repo, 'snapshots', 'test', 'remote', 'assets', 'metadata.yaml'), 'utf8'), /type: assets/);
   assert.equal(git('branch', '--show-current').toString().trim(), 'test/remote');
 
-  git('add', 'snapshots/test/remote/assets');
-  git('commit', '-m', 'Export on the working branch');
+  await evaluate('document.querySelector(".repo-views button:first-child").click()');
+  for (let attempt = 0; attempt < 50 && !(await evaluate('!!document.querySelector(".diff-files")')); attempt++) await wait(100);
+  assert.equal(await evaluate('document.querySelector("main .panel h2").textContent'), 'Рабочее дерево');
+  assert.equal(await evaluate('!!document.querySelector(".diff-files")'), true, await evaluate('document.querySelector("main")?.innerText?.slice(0, 400)'));
+
+  await evaluate(`(() => {
+    const field = document.querySelector('input[aria-label="Сообщение коммита"]');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, 'Export on the working branch');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+  })()`);
+  await evaluate('Array.from(document.querySelectorAll("main button")).find(button => button.textContent === "Создать коммит").click()');
+  for (let attempt = 0; attempt < 50 && !(await evaluate(exportSuccess))?.startsWith('Коммит создан'); attempt++) await wait(100);
+  assert.match(await evaluate(exportSuccess), /^Коммит создан/);
+  assert.equal(git('log', '-1', '--format=%s').toString().trim(), 'Export on the working branch');
+
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
   const success = 'document.querySelector("main .notice.success")?.textContent';
   for (let attempt = 0; attempt < 50 && await evaluate(success) !== 'Снимок импортирован и проверен.'; attempt++) await wait(100);
   assert.equal(await evaluate(success), 'Снимок импортирован и проверен.');
-  assert.equal(await evaluate('document.querySelector("h1").textContent'), 'Экспорт');
-  assert.equal(await evaluate('!!document.querySelector(".diff-files")'), true);
+  assert.equal(await evaluate('document.querySelector("main .panel h2").textContent'), 'Рабочее дерево');
   assert.equal(superset.calls.imports, 1);
   const backups = join(profile, 'backups');
   const [backup] = await readdir(backups);

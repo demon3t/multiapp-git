@@ -174,11 +174,10 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),
   fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,
   async exportSnapshot(input) {
-    preparedExport = undefined;
     const repo = applicationRepo(input);
     const { head, files, ...result } = await exportWorkingSnapshot(profileFor(input.profileId).adapter, repo);
     const id = randomUUID();
-    if (result.changes.length) preparedExport = { ...input, head, files, branch: result.branch, folder: result.folder, id };
+    preparedExport = result.changes.length ? { ...input, head, files, branch: result.branch, folder: result.folder, id } : undefined;
     return { ...result, id };
   },
   async commit(input) {

@@ -6,12 +6,14 @@ type RefActions = { active?: string; selected?: string; disabled: boolean; onSel
 function BranchNodes({ nodes, ...actions }: RefActions & { nodes: Map<string, RefNode> }) {
   return <ul>{[...nodes].map(([name, node]) => {
     const ref = node.ref;
+    const current = ref !== undefined && ref === actions.active;
     return <li key={name}>
       {ref && <button type="button" className={'branch-ref' + (ref === actions.selected ? ' selected' : '')}
-        aria-current={ref === actions.active ? 'true' : undefined} disabled={actions.disabled}
+        aria-current={current ? 'true' : undefined} disabled={actions.disabled}
         title={actions.onCheckout ? ref + ' · Двойной щелчок для переключения' : ref}
         onClick={() => actions.onSelect(ref)} onDoubleClick={() => actions.onCheckout?.(ref)}>
-        <span className="branch-dot" aria-hidden="true"/><span>{name}</span>
+        <span className="branch-dot" aria-hidden="true"/><span className="branch-name">{name}</span>
+        {current && <span className="branch-current" aria-hidden="true">Текущая</span>}
       </button>}
       {node.children.size > 0 && <details open>
         <summary>{name}</summary>

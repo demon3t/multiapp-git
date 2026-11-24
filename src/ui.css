@@ -60,8 +60,11 @@ nav button:hover,nav .current{color:#124c8c;background:#dce9f9}
 .branch-group+.branch-group{border-top:1px solid #d4dae3}
 .branch-empty{padding:2px 8px 5px;color:#596474}
 .branches .branch-ref{display:flex;align-items:center;gap:5px;width:100%;border:0;border-radius:3px;text-align:left;padding:2px 4px;background:transparent;min-height:20px;font-weight:400}
-.branch-ref span:last-child{overflow:hidden;text-overflow:ellipsis}
+.branch-name{overflow:hidden;text-overflow:ellipsis}
 .branches summary:hover,.branch-ref:hover,.branch-ref[aria-current=true]{background:#e0eafa;color:#19599e}
+.branches .branch-ref[aria-current=true]{font-weight:650}
+.branch-ref[aria-current=true] .branch-dot{background:currentColor}
+.branch-current{margin-left:auto;font-size:10px;font-weight:600}
 .branches .branch-ref.selected:not([aria-current=true]){background:#e8edf4}
 .branch-dot{width:6px;height:6px;flex:0 0 6px;border:1px solid #4383ca;border-radius:50%;display:inline-block}
 main{min-height:0;overflow:auto;max-width:none;padding:10px 12px;background:#fbfcfd}

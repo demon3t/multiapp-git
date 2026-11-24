@@ -7,7 +7,7 @@ import { BranchList } from './branch-list';
 import { GitHistory } from './git-history';
 
 declare global { interface Window { mgit: Bridge } }
-const pages = ['Приложения', 'Репозитории', 'Экспорт', 'История Git', 'История операций', 'Настройки'] as const;
+const pages = ['Приложения', 'Репозитории', 'История Git', 'История операций', 'Настройки'] as const;
 type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
@@ -216,8 +216,6 @@ function App() {
     });
   }
   function exportSuperset() {
-    navigate('Экспорт');
-    invalidate();
     void run('exportSnapshot', { repo, profileId }, 'Экспорт и запись снимка', result => {
       setGit(result.state);
       setGitDiff(undefined);
@@ -462,19 +460,19 @@ function App() {
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: false }, 'Переключение ветки', updateGit)}>Переключить</button>
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
         </section>}
+        {exportResult && <section className="panel"><h2>Изменения снимка</h2><Counts values={exportResult.counts}/>
+          <p className="hint">Файлов с изменениями: {exportResult.changes.length}.</p>
+          {exportResult.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {exportResult.issues.length}</summary>
+            <div className="asset-list">{exportResult.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
+          </details>}
+          <Changes key={exportResult.id} changes={exportResult.changes}/>
+          {exportResult.changes.length > 0 && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage}
+            onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
+            <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: exportResult.id, message: commitMessage }, 'Создание коммита', result => {
+              updateGit(result); setMessage('Коммит создан: ' + result.head);
+            })}>Создать коммит</button></div>}
+        </section>}
       </>}
-      {page === 'Экспорт' && exportResult && <section className="panel"><h2>Изменения снимка</h2><Counts values={exportResult.counts}/>
-        <p className="hint">Файлов с изменениями: {exportResult.changes.length}.</p>
-        {exportResult.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {exportResult.issues.length}</summary>
-          <div className="asset-list">{exportResult.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
-        </details>}
-        <Changes key={exportResult.id} changes={exportResult.changes}/>
-        {exportResult.changes.length > 0 && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage}
-          onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
-          <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: exportResult.id, message: commitMessage }, 'Создание коммита', result => {
-            updateGit(result); setMessage('Коммит создан: ' + result.head);
-          })}>Создать коммит</button></div>}
-      </section>}
       {page === 'История операций' && <section className="panel">
         {history.length === 0 ? <p className="empty">Операций пока нет.</p> : <table><thead><tr><th>Время</th><th>Действие</th><th>Статус</th></tr></thead>
           <tbody>{history.map((entry, index) => <tr key={entry.time + index}><td>{new Date(entry.time).toLocaleString('ru-RU')}</td><td>{entry.action}</td>
