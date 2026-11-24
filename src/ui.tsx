@@ -307,13 +307,20 @@ function App() {
       </div>
       <div className="title-drag"/>
       <div className="updates-menu">
-        {updateAvailable && <button className="primary" onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>
-          {update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' :
-            update?.status === 'ready' ? 'Обновление готово' : update?.status === 'installing' ? 'Установка…' : 'Обновить'}
+        {updateAvailable && <button className="update-icon-button update-available"
+          data-active={update?.status === 'downloading' || update?.status === 'installing'}
+          aria-label={'Доступно обновление ' + update?.latest}
+          title={update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' : 'Доступно обновление ' + update?.latest}
+          aria-haspopup="dialog" disabled={update?.status === 'installing'} onClick={commands.updateNotes.run}>
+          <OperationIcon name="import"/>
+          <span className="update-label" aria-hidden="true">
+            {update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' :
+              update?.status === 'installing' ? 'Установка…' : 'Обновить'}
+          </span>
         </button>}
-        <button className="updates-toggle" aria-expanded={updateMenu}
-          onClick={() => setUpdateMenu(!updateMenu)}>
-          Обновления
+        <button className="updates-toggle update-icon-button" aria-label="Обновления" title="Обновления"
+          onClick={() => setUpdateMenu(!updateMenu)} aria-expanded={updateMenu}>
+          <span className="update-icon" aria-hidden="true">↻</span>
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
           <h2>mGit {update?.current}</h2>

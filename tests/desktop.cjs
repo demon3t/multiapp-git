@@ -99,6 +99,7 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'idle');
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
   assert.equal(await evaluate('!!document.querySelector(".updates-panel")'), false);
+  assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Обновления');
   assert.deepEqual(await evaluate('window.mgit.call("profiles")'), { ok: true, data: [] });
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
     'PULL', 'FETCH', 'PUSH'
