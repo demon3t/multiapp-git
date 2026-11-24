@@ -7,8 +7,7 @@ import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model'
 import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
-import { prepareSnapshot, summarize } from './core/snapshot';
-import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
+import { exportWorkingSnapshot, importWorkingSnapshot } from './core/workflow';
 import { checkRelease, downloadInstaller, releaseChanges, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
@@ -16,8 +15,7 @@ type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: bool
 let state: State;
 let window: BrowserWindow;
 let busy = false;
-let preparedExport: (Context & Awaited<ReturnType<typeof exportSnapshot>> & { id: string; head: string; branch: string; written: boolean }) | undefined;
-let preparedImport: (Context & Awaited<ReturnType<typeof sourceSnapshot>> & { id: string; expected: Awaited<ReturnType<typeof planImport>> }) | undefined;
+let preparedExport: (Context & Pick<Awaited<ReturnType<typeof exportWorkingSnapshot>>, 'head' | 'branch' | 'folder' | 'files'> & { id: string }) | undefined;
 const path = () => join(app.getPath('userData'), 'mgit.json');
 let releaseStatus: UpdateStatus = { current: app.getVersion(), status: 'idle' };
 let updateCheck: Promise<ReturnType<typeof updateView>> | undefined;
@@ -114,11 +112,11 @@ function listProfiles() {
     type: item.type ?? 'superset', repo: item.repo ?? '', mappingIds: Object.keys(unlock({ profile, ...item }).connections)
   }));
 }
-function profileFor(id: string) {
+function profileFor(id: string, timeout?: number) {
   const item = state.profiles.find(item => item.profile.id === id);
   if (!item) throw new Failure('Выберите профиль Superset.');
   const secret = unlock(item);
-  return { profile: item.profile, secret, adapter: new Superset(item.profile, secret) };
+  return { profile: item.profile, secret, adapter: new Superset(item.profile, secret, timeout) };
 }
 function applicationRepo(input: Context) {
   const repo = state.profiles.find(item => item.profile.id === input.profileId)?.repo;
@@ -160,7 +158,6 @@ async function save(input: ProfileInput) {
   if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
   const encrypted = safeStorage.encryptString(JSON.stringify(secret)).toString('base64');
   await persist({ ...state, profiles: [...state.profiles.filter(item => item.profile.id !== profile.id), { profile, encrypted, repo, type: input.type }] });
-  preparedImport = undefined;
   preparedExport = undefined;
   return listProfiles();
 }
@@ -170,72 +167,34 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   async open(path) { const repo = await git.openRepoRoot(path); return { repo, state: await git.gitStatus(repo) }; },
   async init(path) { const repo = await git.initRepo(path); return { repo, state: await git.gitStatus(repo) }; },
   async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
-  status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
+  status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create, input.remote),
   gitLog: input => git.gitLog(input.repo, input.ref, input.offset),
   commitFiles: input => git.commitFiles(input.repo, input.sha),
   commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),
   fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,
-  async inventory(id) {
-    return (await exportSnapshot(profileFor(id).adapter)).assets;
-  },
-  async exportPreview(input) {
+  async exportSnapshot(input) {
     preparedExport = undefined;
     const repo = applicationRepo(input);
-    const exported = await exportSnapshot(profileFor(input.profileId).adapter, input.selected);
-    const preview = await git.previewWrite(repo, input.folder, exported.files);
+    const { head, files, ...result } = await exportWorkingSnapshot(profileFor(input.profileId).adapter, repo);
     const id = randomUUID();
-    preparedExport = { ...input, ...exported, id, head: preview.head, branch: preview.branch, written: false };
-    return { ...preview, id, counts: exported.counts, issues: exported.issues };
-  },
-  async write(id) {
-    const prepared = preparedExport;
-    if (!prepared || prepared.id !== id || prepared.written) throw new Failure('Сначала подготовьте экспорт.');
-    const result = await git.writeSnapshot(prepared.repo, prepared.folder, prepared.files, prepared);
-    prepared.written = Boolean(result.changes.length);
-    return git.gitStatus(prepared.repo);
+    if (result.changes.length) preparedExport = { ...input, head, files, branch: result.branch, folder: result.folder, id };
+    return { ...result, id };
   },
   async commit(input) {
     const prepared = preparedExport;
-    if (!prepared || prepared.id !== input.id || !prepared.written) throw new Failure('Сначала запишите просмотренный снимок.');
+    if (!prepared || prepared.id !== input.id) throw new Failure('Сначала экспортируйте снимок.');
     const result = await git.commitSnapshot(prepared.repo, prepared.folder, input.message, prepared);
     preparedExport = undefined;
     return result;
   },
-  async validate(input) {
-    const source = await sourceSnapshot(input.repo, input.ref, input.folder);
-    const { assets, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
-    return { sha: source.sha, counts: summarize(assets), excluded };
-  },
-  snapshotFolders: input => git.snapshotFolders(input.repo, input.ref),
-  async plan(input) {
-    preparedImport = undefined;
-    const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
-    const { profile, secret, adapter } = profileFor(input.profileId);
-    const { files, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
-    const expected = await planImport(adapter, profile, files, secret.connections);
-    const id = randomUUID();
-    preparedImport = { ...input, ...source, files, id, expected };
-    const { targetState, connectionState, ...publicPlan } = expected;
-    return { ...publicPlan, id, sha: source.sha, excluded };
-  },
-  async verify(input) {
-    const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
-    const { files } = prepareSnapshot(source.files, input.compatibleOnly);
-    return verifyImport(profileFor(input.profileId).adapter, files);
-  },
-  async apply(input) {
-    const prepared = preparedImport;
-    if (!prepared || prepared.id !== input.id) throw new Failure('Сначала постройте план импорта.');
-    const { profile, secret, adapter } = profileFor(prepared.profileId);
-    if (input.confirm !== confirmation(profile, prepared.sha)) throw new Failure('Подтвердите импорт названием приложения и полным SHA.');
-    let backup: string | undefined;
-    if (input.backup) {
-      backup = (await dialog.showSaveDialog(window, { defaultPath: 'superset-assets-before-' + prepared.sha.slice(0, 10) + '.zip',
-        filters: [{ name: 'ZIP', extensions: ['zip'] }] })).filePath;
-      if (!backup) throw new Failure('Выбор файла резервного экспорта отменён.', 'cancelled');
-    }
-    preparedImport = undefined;
-    return applyImport(adapter, profile, prepared.files, secret.connections, { sha: prepared.sha, confirm: input.confirm, backup, expected: prepared.expected });
+  async importSnapshot(input) {
+    const repo = applicationRepo(input);
+    const { profile, secret, adapter } = profileFor(input.profileId, 10 * 60_000);
+    return importWorkingSnapshot(adapter, profile, repo, secret.connections, async sha => {
+      const directory = join(app.getPath('userData'), 'backups');
+      await fs.mkdir(directory, { recursive: true });
+      return join(directory, 'superset-' + sha.slice(0, 10) + '-' + randomUUID() + '.zip');
+    });
   },
   history: () => state.history,
   updateStatus: updateView,
@@ -279,12 +238,11 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'gitLog', 'commitFiles', 'commitPatch', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
-  branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
-  exportPreview: 'Предпросмотр экспорта готов', write: 'Каталог снимка проверен и записан', commit: 'Коммит создан',
-  validate: 'Локальная проверка пройдена', plan: 'План импорта подготовлен', apply: 'Импорт применён и проверен', verify: 'Проверка цели выполнена',
+  branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен',
+  exportSnapshot: 'Снимок Superset записан', importSnapshot: 'Импорт Superset применён и проверен', commit: 'Коммит создан',
   saveUpdateSettings: 'Настройки обновлений сохранены'
 };
 async function log(action: keyof Requests, status: Entry['status'], message: string) {
@@ -299,8 +257,7 @@ const handle: Bridge['call'] = async (method, input) => {
   if (tracked) busy = true;
   try {
     const data = await requests[method](input);
-    const unsuccessful = method === 'verify' && data && typeof data === 'object' && 'verified' in data && !data.verified;
-    await log(method, unsuccessful ? 'error' : 'ok', unsuccessful ? 'На стенде есть расхождения.' : '');
+    await log(method, 'ok', '');
     return { ok: true, data };
   } catch (error) {
     const failure = error instanceof Failure ? error : new Failure('Операция не завершилась. Проверьте доступ и свободное место.');

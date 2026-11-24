@@ -12,12 +12,10 @@ export type GitCommit = { sha: string; parents: string[]; refs: string[]; author
 export type GitCommitFile = { status: string; path: string; previousPath?: string };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
-export type Context = { repo: string; folder: string; profileId: string };
-export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
+export type Context = { repo: string; profileId: string };
 export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
-export type Preview = { id: string; head: string; branch: string; counts: Record<string, number>; changes: Change[]; issues: Issue[] };
-export type Plan = { id: string; sha: string; version: string; url: string; counts: Record<string, number>; assets: AssetSummary[]; excluded: Issue[] };
-export type Verification = { verified: boolean; checked: number; issues: unknown[] };
+export type ExportResult = { id: string; branch: string; folder: string; counts: Record<string, number>; changes: Change[]; issues: Issue[]; state: GitState };
+export type ImportResult = { branch: string; folder: string; sha: string; state: GitState; counts: Record<string, number>; excluded: Issue[]; backupPath: string; checked: number };
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
   save: [ProfileInput, ProfileSummary[]];
@@ -31,19 +29,13 @@ export type Requests = {
   gitLog: [{ repo: string; ref?: string; offset: number }, { commits: GitCommit[]; more: boolean }];
   commitFiles: [{ repo: string; sha: string }, { message: string; files: GitCommitFile[] }];
   commitPatch: [{ repo: string; sha: string; paths: string[] }, string];
-  branch: [{ repo: string; branch: string; create: boolean }, GitState];
+  branch: [{ repo: string; branch: string; create: boolean; remote?: boolean }, GitState];
   fetch: [string, GitState];
   pull: [string, GitState];
   push: [string, GitState];
-  inventory: [string, AssetSummary[]];
-  exportPreview: [Context & { selected: string[] }, Preview];
-  write: [string, GitState];
+  exportSnapshot: [Context, ExportResult];
+  importSnapshot: [Context, ImportResult];
   commit: [{ id: string; message: string }, GitState];
-  validate: [{ repo: string; folder: string; ref: string; compatibleOnly?: boolean }, { sha: string; counts: Record<string, number>; excluded: Issue[] }];
-  snapshotFolders: [{ repo: string; ref: string }, string[]];
-  plan: [Context & { ref: string; compatibleOnly?: boolean }, Plan];
-  verify: [Context & { ref: string; compatibleOnly?: boolean }, Verification];
-  apply: [{ id: string; confirm: string; backup: boolean }, Verification];
   history: [undefined, Entry[]];
   updateStatus: [undefined, UpdateView];
   checkUpdate: [undefined, UpdateView];

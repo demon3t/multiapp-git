@@ -63,6 +63,7 @@ nav button:hover,nav .current{color:#124c8c;background:#dce9f9}
 .branches .branch-ref{display:flex;align-items:center;gap:5px;width:100%;border:0;border-radius:3px;text-align:left;padding:2px 4px;background:transparent;min-height:20px;font-weight:400}
 .branch-ref span:last-child{overflow:hidden;text-overflow:ellipsis}
 .branches summary:hover,.branch-ref:hover,.branch-ref[aria-current=true]{background:#e0eafa;color:#19599e}
+.branches .branch-ref.selected:not([aria-current=true]){background:#e8edf4}
 .branch-dot{width:6px;height:6px;flex:0 0 6px;border:1px solid #4383ca;border-radius:50%;display:inline-block}
 main{min-height:0;overflow:auto;max-width:none;padding:10px 12px;background:#fbfcfd}
 header{margin-bottom:8px}h1{font-size:19px;letter-spacing:-.3px}h2{font-size:13px}

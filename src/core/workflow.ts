@@ -3,8 +3,8 @@ import { promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Adapter, Failure, Files, Profile } from './model';
-import { assertValid, inspect, inspectExport, materialize, normalizeExport, selectAssets, summarize } from './snapshot';
-import { compare, readCommit, resolveCommit } from './git';
+import { assertValid, inspect, inspectExport, materialize, normalizeExport, prepareSnapshot, safePath, selectAssets, summarize } from './snapshot';
+import { compare, gitStatus, readCommit, resolveCommit, snapshotFolders, writeSnapshot } from './git';
 import { pack } from './zip';
 
 export async function exportSnapshot(adapter: Adapter, selected: string[] = []) {
@@ -17,6 +17,42 @@ export async function sourceSnapshot(repo: string, ref: string, folder: string) 
   const sha = await resolveCommit(repo, ref);
   const files = await readCommit(repo, sha, folder);
   return { sha, files };
+}
+
+async function workingSnapshot(repo: string, operation: 'export' | 'import') {
+  const state = await gitStatus(repo);
+  const { branch, head } = state;
+  if (!branch) throw new Failure('Переключитесь на локальную ветку.');
+  const folders = head ? await snapshotFolders(repo, head) : [];
+  const branchFolder = 'snapshots/' + branch + '/assets';
+  const defaultFolder = 'snapshots/superset/assets';
+  const folder = [branchFolder, defaultFolder].find(path => folders.includes(path))
+    ?? (folders.length === 1 ? folders[0] : undefined);
+  if (folder) return { branch, head, folder, state };
+  if (folders.length) throw new Failure('В текущей ветке несколько каталогов снимков. Используйте стандартный путь для снимка этой ветки.', 'validation', folders);
+  if (operation === 'import') throw new Failure('В текущей ветке нет сохранённого снимка Superset.');
+  return { branch, head, folder: safePath(branchFolder) && branchFolder.length <= 150 ? branchFolder : defaultFolder, state };
+}
+
+export async function exportWorkingSnapshot(adapter: Adapter, repo: string) {
+  const working = await workingSnapshot(repo, 'export');
+  const exported = await exportSnapshot(adapter);
+  const review = await writeSnapshot(repo, working.folder, exported.files, working);
+  return { ...working, ...exported, changes: review.changes, state: await gitStatus(repo) };
+}
+
+export async function importWorkingSnapshot(adapter: Adapter, profile: Profile, repo: string,
+  connections: Record<string, string>, backup: (sha: string) => Promise<string>) {
+  const { branch, head: sha, folder, state } = await workingSnapshot(repo, 'import');
+  const { files, assets, excluded } = prepareSnapshot(await readCommit(repo, sha, folder), true);
+  const backupPath = await backup(sha);
+  const verified = await applyImport(adapter, profile, files, connections, {
+    sha, backup: backupPath, async beforeUpload() {
+      const current = await gitStatus(repo);
+      if (current.head !== sha || current.branch !== branch) throw new Failure('Рабочая ветка или HEAD изменились. Повторите импорт.');
+    }
+  });
+  return { branch, sha, folder, state, counts: summarize(assets), excluded, backupPath, checked: verified.checked };
 }
 const digest = (files: Files) => createHash('sha256').update(JSON.stringify([...files].sort(([a], [b]) => a.localeCompare(b)))).digest('hex');
 
@@ -59,7 +95,7 @@ export async function verifyImport(adapter: Adapter, files: Files) {
   return { verified: !issues.length, checked: expected.length, issues };
 }
 export async function applyImport(adapter: Adapter, profile: Profile, files: Files, connections: Record<string, string>, options: {
-  sha: string; confirm?: string; backup?: string; expected?: { targetState: string; connectionState: string };
+  sha: string; confirm?: string; backup?: string; expected?: { targetState: string; connectionState: string }; beforeUpload?: () => Promise<void>;
 }) {
   if (profile.environment === 'PROD' && options.confirm !== confirmation(profile, options.sha)) {
     throw new Failure('Для PROD введите точное название стенда и полный commit SHA.', 'confirmation');
@@ -85,6 +121,7 @@ export async function applyImport(adapter: Adapter, profile: Profile, files: Fil
       if (digest(snapshot) !== current.targetState) throw new Failure('Целевой стенд изменился во время резервного экспорта. Постройте план заново.');
       await fs.writeFile(options.backup, await pack(snapshot), { flag: 'wx' });
     }
+    await options.beforeUpload?.();
     try { await adapter.upload(files, connections); }
     catch (error) {
       if (!(error instanceof Failure) || error.code !== 'import-unknown') throw error;

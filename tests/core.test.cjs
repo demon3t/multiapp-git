@@ -5,6 +5,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { createServer } = require('node:http');
+const { parse, stringify } = require('yaml');
 const { fixture, ids, path } = require('./fixture.cjs');
 const { inspect, assertValid, compatibleSnapshot, normalizeExport, materialize, selectAssets } = require('../dist/core/snapshot');
 const git = require('../dist/core/git');
@@ -37,6 +38,10 @@ test('blocks secret fields, unsafe attachments and incompatible versions', () =>
   const raw = fixture();
   raw.set(path.database, raw.get(path.database).replace('sqlite:///mgit-unconfigured.db', 'postgresql://source:example@source.local/analytics'));
   const normalized = normalizeExport(raw);
+  const chart = parse(normalized.get(path.chart));
+  const formData = { metric: 'count' };
+  chart.query_context = JSON.stringify({ form_data: JSON.stringify(formData) });
+  normalized.set(path.chart, stringify(chart));
   normalized.set('metadata.yaml', normalized.get('metadata.yaml') + 'timestamp: 2026-11-24T17:07:33.291Z\n');
   assertValid(normalized);
   assert(!normalized.get(path.database).includes('source.local'));
@@ -44,6 +49,8 @@ test('blocks secret fields, unsafe attachments and incompatible versions', () =>
   assert.equal(passwords[path.database], 'pass@1');
   assert.match(output.get(path.database), /target.local/);
   assert.match(output.get('metadata.yaml'), /^timestamp: "2026-11-24T17:07:33\.291Z"$/m);
+  assert.deepEqual(JSON.parse(parse(output.get(path.chart)).query_context).form_data, formData);
+  assert.equal(parse(normalized.get(path.chart)).query_context, chart.query_context);
   assert(!normalized.get(path.database).includes('target.local'));
 });
 
