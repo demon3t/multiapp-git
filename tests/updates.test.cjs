@@ -4,7 +4,7 @@ const { createHash } = require('node:crypto');
 const { mkdtemp, readFile, readdir, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { checkRelease, downloadInstaller, installerName } = require('../dist/core/updates');
+const { checkRelease, downloadInstaller, installerName, releaseChanges } = require('../dist/core/updates');
 
 test('checks GitHub Releases and compares semantic versions', async () => {
   const request = async (url, options) => {
@@ -55,4 +55,19 @@ test('downloads a newer private Windows build and verifies the release digest', 
   assert.deepEqual(await readdir(directory), []);
   const file = await downloadInstaller(release.asset, release.current, 'test-token', directory, request, () => {});
   assert.deepEqual(await readFile(file), bytes);
+});
+
+test('loads the changelog from the release tag and groups changes since the installed version', async () => {
+  const request = async (url, options) => {
+    assert.equal(url, 'https://api.github.com/repos/demon3t/multiapp-git/contents/changelog/ru.md?ref=v0.3.4-build.8');
+    assert.equal(options.headers.Authorization, 'Bearer test-token');
+    return new Response([
+      '## 0.3.5', '### New', '- future',
+      '## 0.3.4', '### Fixed', '- issue',
+      '## 0.3.3', '### New', '- feature', '### Improved', '- speed',
+      '## 0.3.2', '### New', '- already installed'
+    ].join('\n'));
+  };
+  assert.deepEqual(await releaseChanges('0.3.2-build.2', '0.3.4-build.8', 'test-token', request),
+    { New: ['feature'], Improved: ['speed'], Fixed: ['issue'] });
 });

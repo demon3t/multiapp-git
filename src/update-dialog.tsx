@@ -1,0 +1,63 @@
+import React, { useEffect, useRef, useState } from 'react';
+import type { UpdateView } from './core/public';
+import type { UpdateChanges } from './core/updates';
+
+const headings = { New: 'Новое', Improved: 'Улучшения', Fixed: 'Исправления' } as const;
+
+export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; busy: boolean; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const [changes, setChanges] = useState<UpdateChanges>();
+  const [notesError, setNotesError] = useState(false);
+  const [installError, setInstallError] = useState('');
+  const [starting, setStarting] = useState(false);
+  const installing = update.status === 'installing';
+  const downloading = update.status === 'downloading';
+  useEffect(() => {
+    dialog.current?.showModal();
+  }, []);
+  useEffect(() => {
+    let active = true;
+    void window.mgit.call('updateChanges', undefined).then(result => {
+      if (!active) return;
+      if (result.ok) setChanges(result.data);
+      else setNotesError(true);
+    }).catch(() => { if (active) setNotesError(true); });
+    return () => { active = false; };
+  }, [update.latest]);
+
+  async function install() {
+    setInstallError('');
+    setStarting(true);
+    try {
+      const result = update.canInstall
+        ? await window.mgit.call('installUpdate', undefined)
+        : await window.mgit.call('openReleases', undefined);
+      if (!result.ok) setInstallError(result.message);
+    } catch {
+      setInstallError('Не удалось запустить обновление.');
+    } finally {
+      setStarting(false);
+    }
+  }
+
+  return <dialog ref={dialog} className="update-dialog" aria-labelledby="update-dialog-title"
+    onCancel={event => { event.preventDefault(); if (!installing) onClose(); }}>
+    <h2 id="update-dialog-title">Что нового в mGit</h2>
+    <p className="mono">{update.current} → <strong>{update.latest}</strong></p>
+    <div className="update-changes" aria-live="polite">
+      {!changes && <p className="hint">{notesError ? 'Не удалось загрузить список изменений.' : 'Загружаем список изменений…'}</p>}
+      {changes && !Object.values(changes).some(items => items.length) && <p className="hint">Для этой сборки нет новых записей в журнале изменений.</p>}
+      {changes && (Object.keys(headings) as (keyof UpdateChanges)[]).map(group => changes[group].length > 0 &&
+        <section key={group}><h3>{headings[group]}</h3><ul>{changes[group].map((item, index) => <li key={index}>{item}</li>)}</ul></section>)}
+    </div>
+    {downloading && <progress max={100} value={update.progress ?? 0} aria-label="Ход загрузки обновления"/>}
+    {(installError || update.message) && <p role="alert">{installError || update.message}</p>}
+    <div className="actions">
+      <button onClick={onClose} disabled={installing}>Позже</button>
+      <button className="primary" onClick={() => void install()} disabled={busy || starting || downloading || installing}>
+        {installing ? 'Установка…' : downloading ? 'Загрузка ' + (update.progress ?? 0) + '%' :
+          update.canInstall ? 'Обновить и перезапустить' : 'Скачать на GitHub'}
+      </button>
+    </div>
+  </dialog>;
+}
