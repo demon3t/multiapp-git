@@ -67,11 +67,14 @@ test('packaged mGit adds a Superset application with its Git repository', { time
     pending.get(message.id)?.(message.result);
     pending.delete(message.id);
   });
-  function evaluate(expression) {
+  function devtools(method, params) {
     return new Promise(resolve => {
-      pending.set(++id, value => resolve(value?.result?.value));
-      socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
+      pending.set(++id, resolve);
+      socket.send(JSON.stringify({ id, method, params }));
     });
+  }
+  async function evaluate(expression) {
+    return (await devtools('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }))?.result?.value;
   }
   function shortcut(code, shiftKey = false) {
     return evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({ code, ctrlKey: true, shiftKey, cancelable: true })}))`);
@@ -94,12 +97,25 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   for (let attempt = 0; attempt < 30 && await evaluate('!!document.querySelector("#update-permission")'); attempt++) await wait(100);
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.automatic, false);
   assert.equal(await evaluate('!!document.querySelector("#update-permission")'), false);
-  await evaluate('document.querySelector(".updates-toggle").click()');
+  await evaluate('document.querySelector(".app-menu button").click()');
+  await evaluate('document.querySelector(".app-menu-panel button:last-child").click()');
   assert.match(await evaluate('document.querySelector(".updates-panel")?.textContent'), /Проверить сейчас/);
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'idle');
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
   assert.equal(await evaluate('!!document.querySelector(".updates-panel")'), false);
-  assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Обновления');
+  assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Проверить обновления');
+  if (process.env.MGIT_TEST_UPDATE_SCREENSHOT) {
+    await evaluate('document.querySelector(".update-icon-button").click()');
+    const notes = 'document.querySelectorAll(".update-dialog[open] li").length';
+    for (let attempt = 0; attempt < 160 && !(await evaluate(notes)); attempt++) await wait(100);
+    assert(await evaluate(notes), 'The update icon should open the dialog with release notes');
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".update-dialog-actions button"), button => button.textContent)'), ['Отмена', 'Обновить']);
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_UPDATE_SCREENSHOT, Buffer.from(data, 'base64'));
+    await evaluate('document.querySelector(".update-dialog-actions button").click()');
+    assert.equal(await evaluate('!!document.querySelector(".update-dialog[open]")'), false);
+    assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'available');
+  }
   assert.deepEqual(await evaluate('window.mgit.call("profiles")'), { ok: true, data: [] });
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
     'PULL', 'FETCH', 'PUSH'
@@ -112,8 +128,8 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.equal(await evaluate('document.querySelector("main .panel h2")?.textContent'), 'Клонировать репозиторий');
   assert.equal(await evaluate('!!document.querySelector(".repo-menu-panel")'), false);
   await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Приложение")).click()');
-  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".app-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd").textContent])'),
-    [['История операций', 'Ctrl+H'], ['Настройки', 'Ctrl+,']]);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".app-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd")?.textContent ?? ""])'),
+    [['История операций', 'Ctrl+H'], ['Настройки', 'Ctrl+,'], ['Настройки обновлений', '']]);
   assert.equal(await evaluate('document.querySelector(".app-menu-panel [role=separator]")?.className'), 'menu-separator');
   await evaluate('document.querySelector(".app-menu-panel button:first-child").click()');
   assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'История операций');

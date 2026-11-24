@@ -3,7 +3,7 @@ import type { Environment, Issue, Profile } from './model';
 import type { UpdateChanges, UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
-export type UpdateView = Omit<UpdateStatus, 'asset'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; hasToken: boolean; askPermission: boolean };
+export type UpdateView = Omit<UpdateStatus, 'asset' | 'tag' | 'notes'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; askPermission: boolean };
 export type GitState = {
   branch: string; status: string; head: string;
   localBranches: string[]; remoteBranches: string[]; tags: string[];
@@ -49,7 +49,7 @@ export type Requests = {
   checkUpdate: [undefined, UpdateView];
   updateChanges: [undefined, UpdateChanges];
   installUpdate: [undefined, UpdateView];
-  saveUpdateSettings: [{ automatic: boolean; autoInstall?: boolean; token?: string; clearToken?: boolean }, UpdateView];
+  saveUpdateSettings: [{ automatic: boolean; autoInstall?: boolean }, UpdateView];
   openReleases: [undefined, void];
 };
 export type Response<T> = { ok: true; data: T } | { ok: false; message: string; code: string; details?: unknown };

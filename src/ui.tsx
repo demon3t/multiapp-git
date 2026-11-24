@@ -98,7 +98,6 @@ function App() {
   const [validation, setValidation] = useState<Requests['validate'][1]>();
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
-  const [token, setToken] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
   const [repoMenu, setRepoMenu] = useState(false);
@@ -135,7 +134,7 @@ function App() {
   useEffect(() => {
     if (!updateMenu) return;
     function close(event: PointerEvent | KeyboardEvent) {
-      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.updates-menu')) setUpdateMenu(false);
+      if (event instanceof KeyboardEvent ? event.key === 'Escape' : event.target instanceof Element && !event.target.closest('.updates-menu, .app-menu')) setUpdateMenu(false);
     }
     window.addEventListener('pointerdown', close);
     window.addEventListener('keydown', close);
@@ -238,6 +237,22 @@ function App() {
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
   }
 
+  function checkForUpdates() {
+    setUpdateMenu(false);
+    void run('checkUpdate', undefined, 'Проверка обновлений', result => {
+      setUpdate(result);
+      if (result.latest && ['available', 'downloading', 'ready'].includes(result.status)) {
+        setUpdateDialog(true);
+      } else if (result.status === 'current') {
+        setMessage('У вас актуальная версия mGit.');
+      } else if (result.status === 'no-release') {
+        setMessage('В репозитории пока нет опубликованных релизов.');
+      } else if (result.status === 'error') {
+        setError({ message: result.message ?? 'Не удалось проверить обновления.' });
+      }
+    });
+  }
+
   const commands = {
     init: { label: 'Инициализировать репозиторий', shortcut: 'Ctrl+Shift+N', code: 'KeyN', ctrl: true, shift: true,
       run: () => openDirectory('init') },
@@ -251,7 +266,7 @@ function App() {
       run: () => { setAppMenu(false); editApplication(profile); } },
     checkUpdate: { label: 'Проверить сейчас', shortcut: 'Ctrl+Shift+U', code: 'KeyU', ctrl: true, shift: true,
       disabled: update?.status === 'checking',
-      run: () => { setUpdateMenu(true); void run('checkUpdate', undefined, 'Проверка обновлений', setUpdate); } },
+      run: checkForUpdates },
     updateNotes: { label: 'Что нового', shortcut: 'Shift+F1', code: 'F1', shift: true, disabled: !updateAvailable,
       run: () => { setUpdateMenu(false); setUpdateDialog(true); } },
     releases: { label: 'Релизы на GitHub', shortcut: 'F1', code: 'F1',
@@ -303,23 +318,15 @@ function App() {
           <CommandButton command={commands.history}/>
           <div className="menu-separator" role="separator"/>
           <CommandButton command={commands.settings}/>
+          <button className="menu-command" type="button" onClick={() => { setAppMenu(false); setUpdateMenu(true); }}>Настройки обновлений</button>
         </div>}
       </div>
       <div className="title-drag"/>
       <div className="updates-menu">
-        {updateAvailable && <button className="update-icon-button update-available"
-          data-active={update?.status === 'downloading' || update?.status === 'installing'}
-          aria-label={'Доступно обновление ' + update?.latest}
-          title={update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' : 'Доступно обновление ' + update?.latest}
-          aria-haspopup="dialog" disabled={update?.status === 'installing'} onClick={commands.updateNotes.run}>
-          <OperationIcon name="import"/>
-          <span className="update-label" aria-hidden="true">
-            {update?.status === 'downloading' ? 'Загрузка ' + (update.progress ?? 0) + '%' :
-              update?.status === 'installing' ? 'Установка…' : 'Обновить'}
-          </span>
-        </button>}
-        <button className="updates-toggle update-icon-button" aria-label="Обновления" title="Обновления"
-          onClick={() => setUpdateMenu(!updateMenu)} aria-expanded={updateMenu}>
+        <button className={'updates-toggle update-icon-button' + (updateAvailable ? ' update-available' : '')}
+          aria-label="Проверить обновления" title="Проверить обновления (Ctrl+Shift+U)" aria-haspopup="dialog"
+          disabled={!!busy || update?.status === 'checking' || update?.status === 'installing'}
+          onClick={checkForUpdates}>
           <span className="update-icon" aria-hidden="true">↻</span>
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
@@ -341,29 +348,12 @@ function App() {
           <label className="check"><input type="checkbox" checked={update?.automatic === true && update?.autoInstall === true}
             disabled={!!busy || update?.automatic !== true} onChange={e =>
               run('saveUpdateSettings', { automatic: true, autoInstall: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Скачивать и устанавливать при выходе</label>
-          <form onSubmit={e => {
-            e.preventDefault();
-            void run('saveUpdateSettings', { automatic: update?.automatic === true, token }, 'Сохранение токена', result => {
-              setToken(''); setUpdate(result);
-            });
-          }}>
-            <label>GitHub-токен<input type="password" autoComplete="new-password" value={token}
-              placeholder={update?.hasToken ? 'Токен сохранён' : 'Для закрытого репозитория'} onChange={e => setToken(e.target.value)}/></label>
-            <div className="actions">
-              <button type="submit" disabled={!!busy || !token.trim()}>Сохранить токен</button>
-              {update?.hasToken && <button type="button" disabled={!!busy} onClick={() =>
-                run('saveUpdateSettings', { automatic: update.automatic === true, clearToken: true }, 'Удаление токена', setUpdate)}>Удалить токен</button>}
-            </div>
-          </form>
         </section>}
         {update?.askPermission && !updateMenu && <section className="updates-panel" aria-labelledby="update-permission">
           <h2 id="update-permission">Проверять обновления автоматически?</h2>
           <p>mGit сможет проверять новые версии ежедневно, пока приложение открыто.</p>
           <div className="actions">
-            <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', result => {
-              setUpdate(result);
-              if (!result.hasToken) setUpdateMenu(true);
-            })}>Разрешить</button>
+            <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', setUpdate)}>Разрешить</button>
             <button disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: false }, 'Сохранение настроек', setUpdate)}>Нет, спасибо</button>
           </div>
         </section>}

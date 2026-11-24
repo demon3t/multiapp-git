@@ -9,7 +9,7 @@ const repositoryApi = 'https://api.github.com/repos/demon3t/multiapp-git';
 const api = repositoryApi + '/releases';
 export const installerName = 'mGit-Windows-x64-Setup.exe';
 const maxInstallerBytes = 512 * 1024 * 1024;
-type Asset = { id: number; size: number; digest: string };
+type Asset = { url: string; size: number; digest: string };
 type Request = (url: string, options: RequestInit) => Promise<Response>;
 const changeGroups = ['New', 'Improved', 'Fixed'] as const;
 type ChangeGroup = typeof changeGroups[number];
@@ -22,61 +22,62 @@ export type UpdateStatus = {
   message?: string;
   progress?: number;
   asset?: Asset;
+  tag?: string;
+  notes?: string;
 };
 
-function githubHeaders(current: string, token: string, accept: string) {
-  return {
-    Accept: accept,
-    'User-Agent': 'mGit/' + current,
-    ...(token ? { Authorization: 'Bearer ' + token } : {})
-  };
+function githubHeaders(current: string, accept: string) {
+  return { Accept: accept, 'User-Agent': 'mGit/' + current };
 }
 
-export async function checkRelease(current: string, token: string, request: Request): Promise<UpdateStatus> {
-  const headers = githubHeaders(current, token, 'application/vnd.github+json');
-  const get = (path: string) => request(api + path, { headers, signal: AbortSignal.timeout(15_000), redirect: 'error' });
+export async function checkRelease(current: string, request: Request): Promise<UpdateStatus> {
+  const headers = githubHeaders(current, 'application/vnd.github+json');
+  const get = (path: string) => request(api + path, { headers, cache: 'no-store', signal: AbortSignal.timeout(15_000), redirect: 'error' });
   try {
     const response = await get('/latest');
     if (response.status === 404) {
       const access = await get('?per_page=1');
       if (access.ok) return { current, status: 'no-release' };
       return { current, status: 'error', message: access.status === 404 || access.status === 401
-        ? 'Нет доступа к релизам mGit. Укажите GitHub-токен с правом чтения Contents.'
+        ? 'Публичные релизы mGit недоступны.'
         : 'GitHub вернул HTTP ' + access.status + '.' };
     }
-    if (!response.ok) return { current, status: 'error', message: response.status === 401
-      ? 'GitHub отклонил токен. Проверьте его срок действия и доступ к репозиторию.'
-      : 'GitHub вернул HTTP ' + response.status + '.' };
-    const { tag_name: tag, draft, prerelease, assets } = await response.json();
+    if (!response.ok) return { current, status: 'error', message: 'GitHub вернул HTTP ' + response.status + '.' };
+    const { tag_name: tag, draft, prerelease, assets, body } = await response.json();
     const latest = typeof tag === 'string' && tag.length < 100 ? valid(tag) : null;
     if (!latest || !valid(current) || draft || prerelease) {
       return { current, status: 'error', message: 'GitHub вернул неожиданные данные о релизе.' };
     }
     if (!gt(latest, current)) return { current, latest, status: 'current' };
     const installer = Array.isArray(assets) && assets.find(asset => asset?.name === installerName && asset.state === 'uploaded');
-    const asset: Asset | undefined = installer && Number.isSafeInteger(installer.id) && installer.id > 0 &&
+    const url = releasesPage + '/download/' + encodeURIComponent(tag) + '/' + installerName;
+    const asset: Asset | undefined = installer?.browser_download_url === url &&
       Number.isSafeInteger(installer.size) && installer.size > 0 && installer.size <= maxInstallerBytes &&
       typeof installer.digest === 'string' && /^sha256:[a-f0-9]{64}$/.test(installer.digest)
-      ? { id: installer.id, size: installer.size, digest: installer.digest.slice(7) } : undefined;
-    return { current, latest, status: 'available', ...(asset && { asset }) };
+      ? { url, size: installer.size, digest: installer.digest.slice(7) } : undefined;
+    return { current, latest, tag, status: 'available', ...(asset && { asset }), ...(typeof body === 'string' && { notes: body }) };
   } catch {
     return { current, status: 'error', message: 'Не удалось связаться с GitHub. Проверьте подключение и повторите попытку.' };
   }
 }
 
-export async function releaseChanges(current: string, latest: string, token: string, request: Request): Promise<UpdateChanges> {
+export async function releaseChanges({ current, latest, tag, notes }: UpdateStatus, request: Request): Promise<UpdateChanges> {
   const groups: UpdateChanges = { New: [], Improved: [], Fixed: [] };
-  if (!valid(current) || !valid(latest) || !gt(latest, current)) return groups;
-  const response = await request(repositoryApi + '/contents/changelog/ru.md?ref=' + encodeURIComponent('v' + latest), {
-    headers: githubHeaders(current, token, 'application/vnd.github.raw+json'),
+  if (!latest || !tag || !valid(current) || !valid(latest) || !gt(latest, current)) return groups;
+  const fallback = (notes ?? '').split(/\r?\n/).map(line => line.trim())
+    .filter(line => line && !/^#|^\*\*Full Changelog\*\*/i.test(line))
+    .map(line => line.replace(/^[-*]\s+/, '').replace(/ by @[\w-]+ in https:\/\/github\.com\/\S+$/, ''));
+  const response = await request(repositoryApi + '/contents/changelog/ru.md?ref=' + encodeURIComponent(tag), {
+    headers: githubHeaders(current, 'application/vnd.github.raw+json'),
     signal: AbortSignal.timeout(15_000), redirect: 'error'
+  }).catch(error => {
+    if (!fallback.length) throw error;
   });
-  if (response.status === 404) return groups;
-  if (!response.ok) throw new Error('GitHub вернул HTTP ' + response.status + '.');
+  if (response && !response.ok && response.status !== 404 && !fallback.length) throw new Error('GitHub вернул HTTP ' + response.status + '.');
   const latestBase = latest.replace(/-build\.\d+$/, '');
   let included = false;
   let group: ChangeGroup | undefined;
-  for (const line of (await response.text()).split(/\r?\n/)) {
+  for (const line of (response?.ok ? await response.text() : '').split(/\r?\n/)) {
     if (line.startsWith('## ')) {
       const version = valid(line.slice(3).split(/\s+/, 1)[0]);
       included = Boolean(version && gt(version, current) && !gt(version, latestBase) &&
@@ -88,16 +89,14 @@ export async function releaseChanges(current: string, latest: string, token: str
       groups[group].push(line.slice(2).trim());
     }
   }
-  return groups;
+  return Object.values(groups).some(items => items.length) ? groups : { ...groups, Improved: fallback };
 }
 
 export async function downloadInstaller(
-  asset: Asset, current: string, token: string, directory: string, request: Request, onProgress: (progress: number) => void
+  asset: Asset, directory: string, request: Request, onProgress: (progress: number) => void
 ) {
   const signal = AbortSignal.timeout(15 * 60_000);
-  let response = await request(api + '/assets/' + asset.id, {
-    headers: githubHeaders(current, token, 'application/octet-stream'), redirect: 'manual', signal
-  });
+  let response = await request(asset.url, { redirect: 'manual', signal });
   if (response.status === 302) {
     const location = new URL(response.headers.get('location') ?? '');
     if (location.protocol !== 'https:' || location.port || location.username || location.password ||
