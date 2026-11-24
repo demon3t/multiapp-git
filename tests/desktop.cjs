@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
-const { mkdir, mkdtemp, readFile, realpath, rm, writeFile } = require('node:fs/promises');
+const { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { once } = require('node:events');
@@ -273,20 +273,22 @@ test('packaged mGit switches Git branches and runs Superset operations in one cl
   for (let attempt = 0; attempt < 50 && !(await evaluate('!!document.querySelector(".diff-files")')); attempt++) await wait(100);
   assert.equal(await evaluate('document.querySelector("h1").textContent'), 'Экспорт');
   assert.equal(await evaluate('!!document.querySelector(".diff-files")'), true, await evaluate('document.querySelector("main")?.innerText?.slice(0, 400)'));
+  assert.doesNotMatch(await evaluate('document.querySelector("main").innerText'), /Каталог снимка|Репозиторий|Рабочая ветка|^Superset$/m);
   assert.match(await readFile(join(repo, 'snapshots', 'test', 'remote', 'assets', 'metadata.yaml'), 'utf8'), /type: assets/);
   assert.equal(git('branch', '--show-current').toString().trim(), 'test/remote');
 
   git('add', 'snapshots/test/remote/assets');
   git('commit', '-m', 'Export on the working branch');
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
-  for (let attempt = 0; attempt < 50 && !(await evaluate('document.querySelector("main").innerText.includes("Результат импорта")')); attempt++) await wait(100);
-  const result = await evaluate('document.querySelector("main").innerText');
-  assert.match(result, /Результат импорта/);
-  assert.match(result, /Проверены UUID и связи 5 объектов/);
-  assert.match(result, /test\/remote/);
+  const success = 'document.querySelector("main .notice.success")?.textContent';
+  for (let attempt = 0; attempt < 50 && await evaluate(success) !== 'Снимок импортирован и проверен.'; attempt++) await wait(100);
+  assert.equal(await evaluate(success), 'Снимок импортирован и проверен.');
+  assert.equal(await evaluate('document.querySelector("h1").textContent'), 'Экспорт');
+  assert.equal(await evaluate('!!document.querySelector(".diff-files")'), true);
   assert.equal(superset.calls.imports, 1);
-  const backup = await evaluate('document.querySelector(".panel p.hint:last-child .mono").textContent');
-  assert((await readFile(backup)).length > 0);
+  const backups = join(profile, 'backups');
+  const [backup] = await readdir(backups);
+  assert((await readFile(join(backups, backup))).length > 0);
   if (process.env.MGIT_TEST_SCREENSHOT) {
     const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
     await writeFile(process.env.MGIT_TEST_SCREENSHOT, Buffer.from(data, 'base64'));
