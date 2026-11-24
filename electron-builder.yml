@@ -11,8 +11,11 @@ files:
   - dist/ui/**
 win:
   target: nsis
-  signAndEditExecutable: false
+  icon: build/icon.ico
+  signExecutable: false
 nsis:
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
   artifactName: mGit-Windows-x64-Setup.${ext}
   allowToChangeInstallationDirectory: true
   oneClick: false
