@@ -7,7 +7,7 @@ import { BranchList } from './branch-list';
 import { GitHistory } from './git-history';
 
 declare global { interface Window { mgit: Bridge } }
-const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История Git', 'История операций', 'Настройки'] as const;
+const pages = ['Приложения', 'Репозитории', 'Экспорт', 'История Git', 'История операций', 'Настройки'] as const;
 type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
@@ -81,7 +81,7 @@ function App() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState<{ message: string; details?: unknown }>();
   const [exportResult, setExportResult] = useState<ExportResult>();
-  const [importResult, setImportResult] = useState<ImportResult>();
+  const [importExclusions, setImportExclusions] = useState<ImportResult['excluded']>([]);
   const [commitMessage, setCommitMessage] = useState('');
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
@@ -98,7 +98,7 @@ function App() {
     method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void | Promise<void>
   ) {
     if (busy) return;
-    setBusy(title); setError(undefined); setMessage('');
+    setBusy(title); setError(undefined); setMessage(''); setImportExclusions([]);
     try {
       const result = await window.mgit.call(method, input);
       if (result.ok) await complete?.(result.data);
@@ -148,7 +148,7 @@ function App() {
     });
     return () => { active = false; };
   }, [profile?.id, profile?.repo]);
-  function invalidate() { setExportResult(undefined); setImportResult(undefined); setCommitMessage(''); }
+  function invalidate() { setExportResult(undefined); setCommitMessage(''); }
   function chooseProfile(id: string) {
     setHistoryRef(undefined);
     if (id !== profileId) {
@@ -157,7 +157,7 @@ function App() {
     setProfileId(id); invalidate();
   }
   function navigate(next: Page) {
-    setPage(next); setError(undefined); setMessage('');
+    setPage(next); setError(undefined); setMessage(''); setImportExclusions([]);
     if (next === 'История операций') void run('history', undefined, 'Загрузка журнала', setHistory);
   }
   function editApplication(application?: ProfileSummary) {
@@ -227,12 +227,10 @@ function App() {
     });
   }
   function importSuperset() {
-    navigate('Импорт');
-    invalidate();
     void run('importSnapshot', { repo, profileId }, 'Импорт и проверка Superset', result => {
       setGit(result.state);
       setGitDiff(undefined);
-      setImportResult(result);
+      setImportExclusions(result.excluded);
       setMessage(result.excluded.length ? 'Частичный снимок импортирован и проверен.' : 'Снимок импортирован и проверен.');
     });
   }
@@ -272,14 +270,6 @@ function App() {
     window.addEventListener('keydown', handleShortcut);
     return () => window.removeEventListener('keydown', handleShortcut);
   });
-
-  const operationResult = page === 'Экспорт' ? exportResult : importResult;
-  const contextPanel = <div className="context">
-    <label>Superset<div className="readout" title={profile?.url}>{profile?.url || '—'}</div></label>
-    <label>Репозиторий<div className="readout" title={repo}>{repo || '—'}</div></label>
-    <label>Рабочая ветка<div className="readout">{operationResult?.branch ?? (git.branch || '—')}</div></label>
-    {operationResult && <label>Каталог снимка<div className="readout" title={operationResult.folder}>{operationResult.folder}</div></label>}
-  </div>;
 
   return <div className="shell">
     <div className="tabbar">
@@ -414,6 +404,7 @@ function App() {
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
       {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
       {message && <div role="status" className="notice success">{message}</div>}
+      <Exclusions items={importExclusions}/>
       <fieldset disabled={Boolean(busy)}>
       {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}/>
         : <p className="empty">Откройте репозиторий, чтобы увидеть историю Git.</p>)}
@@ -482,29 +473,18 @@ function App() {
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
         </section>}
       </>}
-      {page === 'Экспорт' && <>{contextPanel}
-        {exportResult && <section className="panel"><h2>Изменения снимка</h2><Counts values={exportResult.counts}/>
-          <p className="hint">Файлов с изменениями: {exportResult.changes.length}.</p>
-          {exportResult.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {exportResult.issues.length}</summary>
-            <div className="asset-list">{exportResult.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
-          </details>}
-          <Changes key={exportResult.id} changes={exportResult.changes}/>
-          {exportResult.changes.length > 0 && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage}
-            onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
-            <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: exportResult.id, message: commitMessage }, 'Создание коммита', result => {
-              updateGit(result); setMessage('Коммит создан: ' + result.head);
-            })}>Создать коммит</button></div>}
-        </section>}
-      </>}
-      {page === 'Импорт' && <>{contextPanel}
-        {importResult && <section className="panel"><h2>Результат импорта</h2>
-          <p className="hint mono">{importResult.sha}</p>
-          <Counts values={importResult.counts}/>
-          <Exclusions items={importResult.excluded}/>
-          <p>Проверены UUID и связи {importResult.checked} объектов.</p>
-          <p className="hint">Резервная копия · <span className="mono">{importResult.backupPath}</span></p>
-        </section>}
-      </>}
+      {page === 'Экспорт' && exportResult && <section className="panel"><h2>Изменения снимка</h2><Counts values={exportResult.counts}/>
+        <p className="hint">Файлов с изменениями: {exportResult.changes.length}.</p>
+        {exportResult.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {exportResult.issues.length}</summary>
+          <div className="asset-list">{exportResult.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
+        </details>}
+        <Changes key={exportResult.id} changes={exportResult.changes}/>
+        {exportResult.changes.length > 0 && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage}
+          onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
+          <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: exportResult.id, message: commitMessage }, 'Создание коммита', result => {
+            updateGit(result); setMessage('Коммит создан: ' + result.head);
+          })}>Создать коммит</button></div>}
+      </section>}
       {page === 'История операций' && <section className="panel">
         {history.length === 0 ? <p className="empty">Операций пока нет.</p> : <table><thead><tr><th>Время</th><th>Действие</th><th>Статус</th></tr></thead>
           <tbody>{history.map((entry, index) => <tr key={entry.time + index}><td>{new Date(entry.time).toLocaleString('ru-RU')}</td><td>{entry.action}</td>
