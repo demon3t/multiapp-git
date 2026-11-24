@@ -94,13 +94,24 @@ async function optionalHead(repo: string) {
   return '';
 }
 export async function gitStatus(repo: string) {
-  const [branch, status, branches, head] = await Promise.all([
+  const [branch, status, refs, head] = await Promise.all([
     command(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
     command(repo, ['status', '--porcelain=v1', '--untracked-files=all']),
-    command(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads', 'refs/remotes', 'refs/tags']),
+    command(repo, ['for-each-ref', '--format=%(refname)%09%(symref)', 'refs/heads', 'refs/remotes', 'refs/tags']),
     optionalHead(repo)
   ]);
-  return { branch, status, branches: branches ? branches.split(/\r?\n/) : [], head };
+  const localBranches: string[] = [];
+  const remoteBranches: string[] = [];
+  const tags: string[] = [];
+  for (const line of refs.split(/\r?\n/)) {
+    const [ref, symbolic] = line.split('\t');
+    if (symbolic) continue;
+    if (ref.startsWith('refs/heads/')) localBranches.push(ref.slice('refs/heads/'.length));
+    if (ref.startsWith('refs/remotes/')) remoteBranches.push(ref.slice('refs/remotes/'.length));
+    if (ref.startsWith('refs/tags/')) tags.push(ref.slice('refs/tags/'.length));
+  }
+  if (branch && !localBranches.includes(branch)) localBranches.push(branch);
+  return { branch, status, localBranches, remoteBranches, tags, head };
 }
 export async function gitDiff(repo: string) {
   const flags = ['--no-ext-diff', '--no-textconv', '--no-color'];

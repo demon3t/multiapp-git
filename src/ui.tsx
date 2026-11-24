@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
+import { BranchList } from './branch-list';
 
 declare global { interface Window { mgit: Bridge } }
 const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
@@ -19,14 +20,14 @@ const operationIcons = {
   import: 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6'
 } as const;
 function Icon({ index }: { index: number }) {
-  return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
 }
 function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
-  return <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={operationIcons[name]}/></svg>;
+  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={operationIcons[name]}/></svg>;
 }
 
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
-const emptyGit: GitState = { branch: '', status: '', head: '', branches: [] };
+const emptyGit: GitState = { branch: '', status: '', head: '', localBranches: [], remoteBranches: [], tags: [] };
 const defaultFolder = 'snapshots/superset/assets';
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
@@ -159,7 +160,7 @@ function App() {
       if (active) setSnapshotFolders({ repo, ref: folderRef, head: git.head, paths: result.ok ? result.data : [] });
     }).catch(() => undefined);
     return () => { active = false; };
-  }, [repo, git.head, git.branches, folderRef]);
+  }, [repo, git, folderRef]);
   function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
   function chooseProfile(id: string) {
     if (id !== profileId) {
@@ -214,6 +215,9 @@ function App() {
     }
   }
   function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
+  function selectSnapshotRef(value: string) {
+    navigate('Импорт'); setRef(value); invalidate();
+  }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
@@ -225,7 +229,7 @@ function App() {
     <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
       {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
     <label>Каталог снимка<input value={folder} list="snapshot-folders" onChange={e => { setFolderInput(e.target.value); invalidate(); }}/></label>
-    <datalist id="refs">{git.branches.map(name => <option key={name} value={name}/>)}</datalist>
+    <datalist id="refs">{[...new Set([...git.localBranches, ...git.remoteBranches, ...git.tags])].map(name => <option key={name} value={name}/>)}</datalist>
     <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
   </div>;
 
@@ -332,12 +336,13 @@ function App() {
         <button className="operation" title="Export" aria-label="Export" disabled={!!busy} onClick={() => navigate('Экспорт')}><OperationIcon name="export"/><span>EXPORT</span></button>
         <button className="operation" title="Import" aria-label="Import" disabled={!!busy} onClick={() => navigate('Импорт')}><OperationIcon name="import"/><span>IMPORT</span></button>
       </div>}
-      {repo && <div className="branches">
-        <h2>Ветки и теги</h2>
-        {[...new Set([git.branch, ...git.branches].filter(Boolean))].map(branch =>
-          <button key={branch} disabled={!!busy} className={branch === git.branch ? 'current' : ''}
-            title={branch} onClick={() => { navigate('Импорт'); setRef(branch); invalidate(); }}>
-            <span className="branch-dot" aria-hidden="true"/>{branch}</button>)}
+      {repo && <div className="branches" key={repo}>
+        <BranchList label="Локальные ветки" names={git.localBranches} prefix="refs/heads/"
+          expanded active={'refs/heads/' + git.branch} disabled={!!busy} onSelect={selectSnapshotRef}/>
+        <BranchList label="Удалённые ветки" names={git.remoteBranches} prefix="refs/remotes/"
+          disabled={!!busy} onSelect={selectSnapshotRef}/>
+        {git.tags.length > 0 && <BranchList label="Теги" names={git.tags} prefix="refs/tags/"
+          disabled={!!busy} onSelect={selectSnapshotRef}/>}
       </div>}
     </aside>
     <main>
@@ -406,7 +411,7 @@ function App() {
           {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
             <details open><summary>Рабочее дерево</summary><pre>{gitDiff.unstaged || '—'}</pre></details></div>}
           <div className="actions"><input aria-label="Имя ветки" value={newBranch} onChange={e => setNewBranch(e.target.value)} list="branches" placeholder="Имя локальной ветки"/>
-            <datalist id="branches">{git.branches.map(branch => <option key={branch} value={branch}/>)}</datalist>
+            <datalist id="branches">{git.localBranches.map(branch => <option key={branch} value={branch}/>)}</datalist>
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: false }, 'Переключение ветки', updateGit)}>Переключить</button>
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
         </section>}
