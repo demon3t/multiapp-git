@@ -115,6 +115,13 @@ export async function fetchRemote(repo: string) {
   await git(repo, ['fetch', '--all']);
   return gitStatus(repo);
 }
+
+export async function pullBranch(repo: string) {
+  await assertClean(repo);
+  await git(repo, ['pull', '--ff-only']);
+  return gitStatus(repo);
+}
+
 export async function pushBranch(repo: string) {
   const { branch } = await gitStatus(repo);
   if (!branch) throw new Failure('Выберите локальную ветку для push.');

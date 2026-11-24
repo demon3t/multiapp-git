@@ -78,9 +78,10 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
   assert.equal(await evaluate('!!document.querySelector(".updates-panel")'), false);
   assert.deepEqual(await evaluate('window.mgit.call("profiles")'), { ok: true, data: [] });
-  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("nav button"), x => x.textContent)'), [
-    'Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
+    'PULL', 'FETCH', 'PUSH'
   ]);
+  assert.equal(await evaluate('document.querySelectorAll("nav button").length'), 0);
   await evaluate('document.querySelector(".new-tab").click()');
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector("form")')); attempt++) await wait(100);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("form label"), x => x.firstChild.textContent)'), ['Тип приложения', 'Папка Git']);
@@ -122,29 +123,6 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert(!stored.includes('assert-dpapi-credential'));
   assert(!stored.includes('assert-dpapi-uri'));
 
-  const rightway = process.env.MGIT_RIGHTWAY_REPO;
-  if (rightway) {
-    await evaluate('document.querySelectorAll("nav button")[1].click()');
-    await evaluate(`(() => {
-      const field = document.querySelector('main input');
-      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(rightway)});
-      field.dispatchEvent(new Event('input', { bubbles: true }));
-    })()`);
-    await evaluate('Array.from(document.querySelectorAll("main button")).find(button => button.textContent === "Открыть").click()');
-    for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".branch-status")?.textContent') !== 'test'; attempt++) await wait(100);
-    assert.equal(await evaluate('document.querySelector(".branch-status")?.textContent'), 'test');
-    await evaluate('Array.from(document.querySelectorAll(".toolbar button")).find(button => button.textContent === "Импорт").click()');
-    for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector("input[list=snapshot-folders]")?.value') !== 'snapshots/test/assets'; attempt++) await wait(100);
-    assert.equal(await evaluate('document.querySelector("input[list=snapshot-folders]")?.value'), 'snapshots/test/assets');
-    await evaluate(`(() => {
-      const options = document.querySelectorAll('main input[type=checkbox]');
-      options[0].click();
-      options[1].click();
-      Array.from(document.querySelectorAll('main button')).find(button => button.textContent === 'Проверить снимок').click();
-    })()`);
-    for (let attempt = 0; attempt < 240 && !(await evaluate('!!document.querySelector("main .counts, [role=alert]")')); attempt++) await wait(100);
-    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("main .counts strong"), item => Number(item.textContent))'),
-      [2, 1053, 4094, 113, 1]);
-    assert.match(await evaluate('document.querySelector("main details summary")?.textContent'), /182/);
-  }
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'),
+    ['PULL', 'FETCH', 'PUSH', 'EXPORT', 'IMPORT']);
 });

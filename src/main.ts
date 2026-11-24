@@ -170,7 +170,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   async open(path) { const repo = await git.openRepoRoot(path); return { repo, state: await git.gitStatus(repo) }; },
   async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
-  fetch: git.fetchRemote, push: git.pushBranch,
+  fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,
   async inventory(id) {
     return (await exportSnapshot(profileFor(id).adapter)).assets;
   },
@@ -278,7 +278,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
 const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
-  branch: 'Ветка выбрана', fetch: 'Fetch выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
+  branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
   exportPreview: 'Предпросмотр экспорта готов', write: 'Каталог снимка проверен и записан', commit: 'Коммит создан',
   validate: 'Локальная проверка пройдена', plan: 'План импорта подготовлен', apply: 'Импорт применён и проверен', verify: 'Проверка цели выполнена',
   saveUpdateSettings: 'Настройки обновлений сохранены'

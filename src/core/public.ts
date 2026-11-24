@@ -24,6 +24,7 @@ export type Requests = {
   diff: [string, { staged: string; unstaged: string }];
   branch: [{ repo: string; branch: string; create: boolean }, GitState];
   fetch: [string, GitState];
+  pull: [string, GitState];
   push: [string, GitState];
   inventory: [string, AssetSummary[]];
   exportPreview: [Context & { selected: string[] }, Preview];

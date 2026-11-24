@@ -38,6 +38,13 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 .shell aside{position:static;height:auto;min-height:0;overflow:auto;background:#f1f3f6;color:#303a49;padding:8px 0;border-right:1px solid #ced4de}
 nav{gap:1px}nav button{color:#354253;padding:6px 12px;border-radius:0;font-weight:500}
 nav button:hover,nav .current{color:#124c8c;background:#dce9f9}
+.operation-group{display:grid;grid-template-columns:repeat(3,1fr);gap:4px;padding:4px 6px 8px;border-bottom:1px solid #d4dae3}
+.operation-group.superset-operations{grid-template-columns:repeat(2,1fr);padding-top:8px}
+.operation{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;min-height:54px;padding:5px 2px;border:1px solid transparent;border-radius:5px;background:transparent;color:#354253;font-size:9px;font-weight:750;letter-spacing:.4px}
+.operation:hover:not(:disabled){background:#dce9f9;border-color:#b6cee9;color:#124c8c}
+.operation:disabled{opacity:.4}
+.toolbar-repo{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:45%;font-weight:600}
+.toolbar-branch{font-family:Consolas,monospace;color:#536173}
 .branches{border-top:1px solid #d4dae3;margin-top:10px;padding-top:9px}
 .branches h2{font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:#596474;padding:0 12px 5px}
 .branches button{display:flex;align-items:center;gap:8px;width:100%;border:0;border-radius:0;text-align:left;padding:4px 12px;background:transparent;min-height:27px;overflow:hidden}

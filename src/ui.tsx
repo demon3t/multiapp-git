@@ -11,8 +11,18 @@ const labels: Record<string, string> = { databases: 'Подключения', da
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
 const repositoryName = (path: string) => path.split(/[\\/]/).at(-1);
 const icons = ['M3 5h18v5H3z M3 14h18v5H3z M7 7.5h1 M7 16.5h1', 'M5 3h13v17H5z M5 16h13 M8 7h7 M8 10h5', 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6', 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6', 'M3 12a9 9 0 1 0 3-7 M3 4v5h5 M12 7v5l3 2', 'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2'];
+const operationIcons = {
+  pull: 'M5 5h14 M5 5l4-4 M5 5l4 4 M19 19H5 M19 19l-4-4 M19 19l-4 4',
+  fetch: 'M12 3v14 M7 13l5 5 5-5 M4 20h16',
+  push: 'M12 21V7 M7 11l5-5 5 5 M4 3h16',
+  export: 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6',
+  import: 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6'
+} as const;
 function Icon({ index }: { index: number }) {
   return <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
+}
+function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
+  return <svg aria-hidden="true" width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={operationIcons[name]}/></svg>;
 }
 
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
@@ -255,17 +265,20 @@ function App() {
       </div>
     </div>
     {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
-    <div className="toolbar">
-      <button disabled={!repo || !!busy} onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}>↓ Fetch</button>
-      <button disabled={!repo || !git.head || !git.branch || !!busy} onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен в origin.'); })}>↑ Push</button>
-      <button disabled={!repo || !!busy} onClick={() => run('status', repo, 'Получение статуса', setGit)}>↻ Обновить</button>
-      <button disabled={!applicationReady || !!busy} onClick={() => navigate('Экспорт')}><Icon index={2}/>Экспорт</button>
-      <button disabled={!repo || !!busy} onClick={() => navigate('Импорт')}><Icon index={3}/>Импорт</button>
-    </div>
+    <div className="toolbar"><span className="toolbar-repo" title={repo}>{repo ? repositoryName(repo) : 'Репозиторий не открыт'}</span><span className="toolbar-branch">{git.branch || '—'}</span></div>
     <aside>
-      <nav aria-label="Разделы">{pages.map((name, index) => <button disabled={!!busy} className={page === name ? 'current' : ''} key={name} onClick={() => navigate(name)}>
-        <Icon index={index}/><span>{name}</span>
-      </button>)}</nav>
+      <div className="operation-group" aria-label="Git операции">
+        <button className="operation" title="Pull" aria-label="Pull" disabled={!repo || !git.branch || !!busy}
+          onClick={() => run('pull', repo, 'Git pull', result => { setGit(result); setMessage('Pull выполнен.'); })}><OperationIcon name="pull"/><span>PULL</span></button>
+        <button className="operation" title="Fetch" aria-label="Fetch" disabled={!repo || !!busy}
+          onClick={() => run('fetch', repo, 'Git fetch', result => { setGit(result); setMessage('Fetch выполнен.'); })}><OperationIcon name="fetch"/><span>FETCH</span></button>
+        <button className="operation" title="Push" aria-label="Push" disabled={!repo || !git.head || !git.branch || !!busy}
+          onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен.'); })}><OperationIcon name="push"/><span>PUSH</span></button>
+      </div>
+      {profile?.type === 'superset' && applicationReady && <div className="operation-group superset-operations" aria-label="Superset операции">
+        <button className="operation" title="Export" aria-label="Export" disabled={!!busy} onClick={() => navigate('Экспорт')}><OperationIcon name="export"/><span>EXPORT</span></button>
+        <button className="operation" title="Import" aria-label="Import" disabled={!!busy} onClick={() => navigate('Импорт')}><OperationIcon name="import"/><span>IMPORT</span></button>
+      </div>}
       {repo && <div className="branches">
         <h2>Ветки и теги</h2>
         {[...new Set([git.branch, ...git.branches].filter(Boolean))].map(branch =>
