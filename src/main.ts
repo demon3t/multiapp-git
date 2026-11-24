@@ -12,7 +12,7 @@ import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, 
 import { checkRelease, downloadInstaller, releaseChanges, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
-type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean; encryptedToken?: string } };
+type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean } };
 let state: State;
 let window: BrowserWindow;
 let busy = false;
@@ -28,15 +28,11 @@ let launchingInstaller = false;
 let quitForUpdate = false;
 const updatesSupported = () => app.isPackaged && process.platform === 'win32' && process.arch === 'x64';
 const updateView = () => {
-  const { asset, ...status } = releaseStatus;
+  const { asset, tag, notes, ...status } = releaseStatus;
   return { ...status, canInstall: Boolean(asset && updatesSupported()), automatic: state.updates?.automatic,
-    autoInstall: state.updates?.autoInstall, hasToken: Boolean(state.updates?.encryptedToken),
+    autoInstall: state.updates?.autoInstall,
     askPermission: updatesSupported() && state.updates?.automatic === undefined };
 };
-function updateToken() {
-  const encrypted = state.updates?.encryptedToken;
-  return encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '';
-}
 
 function reportUpdate() {
   if (window && !window.isDestroyed()) window.webContents.send('mgit:update', updateView());
@@ -44,24 +40,29 @@ function reportUpdate() {
 }
 function scheduleUpdate(delay: number) {
   clearTimeout(updateTimer);
-  if (state.updates?.automatic && state.updates.encryptedToken) updateTimer = setTimeout(() => void checkUpdate(), delay);
+  if (state.updates?.automatic) updateTimer = setTimeout(() => void checkUpdate().then(autoDownload), delay);
 }
 function checkUpdate() {
   if (updateCheck) return updateCheck;
-  if (updateDownload || installer || launchingInstaller) return Promise.resolve(updateView());
+  if (updateDownload || launchingInstaller) return Promise.resolve(updateView());
   updateCheck = (async () => {
+    const previousAsset = releaseStatus.asset;
     releaseStatus = { current: app.getVersion(), status: 'checking' };
     reportUpdate();
-    try {
-      releaseStatus = await checkRelease(app.getVersion(), updateToken(), (url, options) => net.fetch(url, options));
-    } catch {
-      releaseStatus = { current: app.getVersion(), status: 'error', message: 'Не удалось прочитать защищённый токен GitHub. Сохраните его заново.' };
+    releaseStatus = await checkRelease(app.getVersion(), (url, options) => net.fetch(url, options));
+    if (installer) {
+      const next = releaseStatus.asset;
+      if (next && next.url === previousAsset?.url && next.digest === previousAsset.digest) {
+        releaseStatus.status = 'ready';
+      } else {
+        await fs.rm(installer, { force: true }).catch(() => undefined);
+        installer = undefined;
+      }
     }
     return reportUpdate();
   })().finally(() => {
     updateCheck = undefined;
     scheduleUpdate(24 * 60 * 60 * 1000);
-    autoDownload();
   });
   return updateCheck;
 }
@@ -74,7 +75,7 @@ function fetchUpdate() {
   releaseStatus = { ...releaseStatus, status: 'downloading', progress: 0, message: undefined };
   reportUpdate();
   updateDownload = Promise.resolve().then(async () => {
-    installer = await downloadInstaller(asset, app.getVersion(), updateToken(), app.getPath('temp'), fetch, progress => {
+    installer = await downloadInstaller(asset, app.getPath('temp'), fetch, progress => {
       releaseStatus.progress = progress;
       reportUpdate();
     });
@@ -242,7 +243,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   checkUpdate,
   async updateChanges() {
     try {
-      return await releaseChanges(app.getVersion(), releaseStatus.latest ?? '', updateToken(), (url, options) => net.fetch(url, options));
+      return await releaseChanges(releaseStatus, (url, options) => net.fetch(url, options));
     } catch {
       throw new Failure('Не удалось загрузить список изменений.');
     }
@@ -259,20 +260,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
     if (typeof input.automatic !== 'boolean' || (input.autoInstall !== undefined && typeof input.autoInstall !== 'boolean')) {
       throw new Failure('Проверьте настройки автоматического обновления.');
     }
-    const token = input.token?.trim();
-    let encryptedToken = input.clearToken ? undefined : state.updates?.encryptedToken;
-    if ((token || input.clearToken) && (updateCheck || updateDownload || launchingInstaller)) throw new Failure('Дождитесь завершения обновления перед сменой токена.');
-    if (token) {
-      if (token.length > 512 || !/^[\w-]+$/.test(token)) throw new Failure('Проверьте формат токена GitHub.');
-      if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
-      encryptedToken = safeStorage.encryptString(token).toString('base64');
-    }
-    await persist({ ...state, updates: { automatic: input.automatic, autoInstall: input.autoInstall ?? state.updates?.autoInstall, encryptedToken } });
-    if (token || input.clearToken) {
-      if (installer) await fs.rm(installer, { force: true }).catch(() => undefined);
-      installer = undefined;
-      releaseStatus = { current: app.getVersion(), status: 'idle' };
-    }
+    await persist({ ...state, updates: { automatic: input.automatic, autoInstall: input.autoInstall ?? state.updates?.autoInstall } });
     scheduleUpdate(15_000);
     autoDownload();
     return reportUpdate();

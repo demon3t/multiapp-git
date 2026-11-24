@@ -12,6 +12,7 @@ export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; bu
   const [starting, setStarting] = useState(false);
   const installing = update.status === 'installing';
   const downloading = update.status === 'downloading';
+  const updating = starting || installing;
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
@@ -41,7 +42,7 @@ export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; bu
   }
 
   return <dialog ref={dialog} className="update-dialog" aria-labelledby="update-dialog-title"
-    onCancel={event => { event.preventDefault(); if (!installing) onClose(); }}>
+    onCancel={event => { event.preventDefault(); if (!updating) onClose(); }}>
     <p className="update-eyebrow">Что нового</p>
     <h2 id="update-dialog-title">mGit {update.latest}</h2>
     <p className="update-versions mono">{update.current} <span aria-hidden="true">→</span> <strong>{update.latest}</strong></p>
@@ -56,10 +57,10 @@ export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; bu
     {downloading && <progress max={100} value={update.progress ?? 0} aria-label="Ход загрузки обновления"/>}
     {(installError || update.message) && <p role="alert">{installError || update.message}</p>}
     <div className="update-dialog-actions">
-      <button onClick={onClose} disabled={installing}>Позже</button>
+      <button onClick={onClose} disabled={updating}>Отмена</button>
       <button className="primary" onClick={() => void install()} disabled={busy || starting || downloading || installing}>
         {installing ? 'Установка…' : downloading ? 'Загрузка ' + (update.progress ?? 0) + '%' :
-          update.canInstall ? 'Обновить и перезапустить' : 'Скачать на GitHub'}
+          update.canInstall ? 'Обновить' : 'Скачать на GitHub'}
       </button>
     </div>
   </dialog>;
