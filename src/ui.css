@@ -107,4 +107,51 @@ label{gap:4px;font-size:12px}.form-grid{gap:9px;margin-top:8px}.actions{gap:5px;
 .update-changes ul{padding-left:22px;margin:0}
 .update-changes li+li{margin-top:4px}
 .update-dialog progress{width:100%}
+.repo-views{padding-bottom:4px;margin-bottom:4px;border-bottom:1px solid #d4dae3}
+.repo-views button{display:block;width:100%;text-align:left;background:transparent;border:0}
+.repo-views button:hover,.repo-views button[aria-pressed=true]{background:#e0eafa;color:#19599e}
+.history-page{padding:0;display:flex;flex-direction:column;overflow:hidden}
+.history-page>fieldset{flex:1;min-height:0;display:flex;flex-direction:column}
+.history-page>.notice,.history-page>.error{margin:6px 8px}
+.git-history{flex:1;min-height:0;display:grid;grid-template-rows:auto minmax(110px,1.15fr) minmax(140px,1fr);background:#fff}
+.git-history-heading{padding:8px 12px;border-bottom:1px solid #d5dae3}
+.git-history-heading h1{font-size:15px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.commit-list{overflow:auto}
+.commit-grid{display:grid;grid-template-columns:auto minmax(120px,1fr) minmax(85px,12%) 74px minmax(108px,13%);align-items:center;gap:8px;text-align:left}
+.commit-table-head{position:sticky;top:0;z-index:1;height:24px;background:#edf1f6;color:#526078;font-weight:650;border-bottom:1px solid #d5dae3}
+.commit-table-head span:first-child{padding-left:8px}
+.commit-row{width:100%;height:27px;padding:0;border:0;border-radius:0;font-weight:400}
+.commit-row:nth-child(odd){background:#f6f8fb}
+.commit-row:hover:not(:disabled),.commit-row[aria-pressed=true]{background:#e2edfb;filter:none}
+.commit-row:focus-visible{outline-offset:-2px}
+.commit-row canvas{display:block}
+.commit-subject{display:flex;align-items:center;gap:4px;overflow:hidden;min-width:0}
+.commit-title,.commit-author,.commit-date{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.commit-ref{padding:1px 4px;max-width:36%;flex:none;overflow:hidden;text-overflow:ellipsis;border-radius:3px;background:#e3eaf4;color:#344d6e;font-size:10px;font-weight:650}
+.commit-ref-head{background:#cce7fc;color:#1b5182}
+.commit-ref-tag{background:#f6e9cd;color:#77541b}
+.history-feedback{margin:0;padding:8px 10px;color:#526078}
+.history-more{margin:6px 8px}
+.commit-details{display:flex;flex-direction:column;min-height:0;border-top:3px solid #cbd4e1}
+.commit-tabs{display:flex;align-items:center;gap:4px;padding:3px 8px;background:#f1f4f8;border-bottom:1px solid #d5dae3}
+.commit-tabs button{background:transparent;border-color:transparent}
+.commit-tabs button[aria-pressed=true]{background:#fff;border-color:#cbd4e1;color:#15549e}
+.commit-tabs>span{margin-left:auto;color:#526078}
+.commit-changes{display:grid;grid-template-columns:minmax(145px,25%) minmax(0,1fr);flex:1;min-height:0}
+.commit-files{overflow:auto;border-right:1px solid #d5dae3}
+.commit-files button{display:flex;align-items:center;gap:5px;width:100%;border:0;border-radius:0;text-align:left;font-weight:400}
+.commit-files button[aria-pressed=true]{background:#e2edfb}
+.commit-files button span:last-child{overflow:hidden;text-overflow:ellipsis}
+.file-status{color:#235a92;font-weight:700}
+.file-status-A{color:#237245}.file-status-D{color:#a12e44}
+.commit-patch{min-width:0;min-height:0;display:flex;flex-direction:column}
+.patch-heading{display:flex;justify-content:space-between;gap:8px;padding:5px 9px;border-bottom:1px solid #e2e7ef}
+.patch-heading span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.patch-heading small{color:#526078;white-space:nowrap}
+.commit-patch pre,.commit-info{overflow:auto;margin:0;padding:6px 8px}
+.commit-patch pre{font-size:11px;white-space:pre;line-height:1.55}
+.commit-patch pre span{display:block;width:max-content;min-width:100%;padding:0 3px}
+.patch-added{background:#dcf3e5;color:#205f3b}.patch-removed{background:#fbe1e5;color:#8e293b}.patch-hunk{background:#e7f0fb;color:#2e5d91}
+.commit-info dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:3px 0 10px}
+.commit-info dd{margin:0;overflow-wrap:anywhere}
 @media(max-width:1000px){.shell{grid-template-columns:176px minmax(0,1fr)}.context{grid-template-columns:repeat(2,minmax(0,1fr))}}

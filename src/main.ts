@@ -171,6 +171,9 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   async init(path) { const repo = await git.initRepo(path); return { repo, state: await git.gitStatus(repo) }; },
   async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
+  gitLog: input => git.gitLog(input.repo, input.ref, input.offset),
+  commitFiles: input => git.commitFiles(input.repo, input.sha),
+  commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),
   fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,
   async inventory(id) {
     return (await exportSnapshot(profileFor(id).adapter)).assets;
@@ -276,7 +279,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',

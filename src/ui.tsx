@@ -4,9 +4,10 @@ import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, Prof
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
 import { BranchList } from './branch-list';
+import { GitHistory } from './git-history';
 
 declare global { interface Window { mgit: Bridge } }
-const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История операций', 'Настройки'] as const;
+const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История Git', 'История операций', 'Настройки'] as const;
 type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
@@ -79,6 +80,7 @@ function App() {
   const [folderInput, setFolderInput] = useState<string>();
   const [snapshotFolders, setSnapshotFolders] = useState<{ repo: string; ref: string; head: string; paths: string[] }>();
   const [ref, setRef] = useState('HEAD');
+  const [historyRef, setHistoryRef] = useState<string>();
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState<{ message: string; details?: unknown }>();
@@ -173,6 +175,7 @@ function App() {
   }, [repo, git, folderRef]);
   function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
   function chooseProfile(id: string) {
+    setHistoryRef(undefined);
     if (id !== profileId) {
       setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD'); setFolderInput(undefined);
     }
@@ -198,7 +201,7 @@ function App() {
     });
   }
   function setOpened(result: { repo: string; state: GitState }) {
-    if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); }
+    if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); setHistoryRef(undefined); }
     const linkedProfile = profiles.find(item => item.repo === result.repo);
     if (linkedProfile && !profiles.some(item => item.id === profileId && item.repo === result.repo)) {
       setProfileId(linkedProfile.id);
@@ -213,7 +216,7 @@ function App() {
     void run('pickDirectory', undefined, 'Выбор каталога Git', async path => {
       if (!path) return;
       await run(method, path, method === 'init' ? 'Инициализация репозитория' : 'Открытие репозитория', result => {
-        navigate('Репозитории');
+        navigate('История Git');
         setOpened(result);
       });
     });
@@ -225,8 +228,10 @@ function App() {
     }
   }
   function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
-  function selectSnapshotRef(value: string) {
-    navigate('Импорт'); setRef(value); invalidate();
+  function showGitHistory(value?: string) {
+    setHistoryRef(value);
+    if (value) { setRef(value); invalidate(); }
+    navigate('История Git');
   }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
@@ -361,11 +366,11 @@ function App() {
     <div className="toolbar">
       <div className="app-tabs" aria-label="Подключённые репозитории">
         {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId && applicationReady}
-          disabled={!!busy} onClick={() => { selectApplication(item); navigate('Приложения'); }}
+          disabled={!!busy} onClick={() => { selectApplication(item); navigate(item.repo ? 'История Git' : 'Приложения'); }}
           title={item.repo || item.url}><Icon index={0}/>{item.name}</button>)}
         {openedRepos.filter(path => !profiles.some(item => item.repo === path)).map(path =>
           <button key={path} aria-pressed={path === repo} disabled={!!busy} title={path}
-            onClick={() => { setCloning(false); navigate('Репозитории'); if (path !== repo) void run('open', path, 'Открытие репозитория', setOpened); }}>
+            onClick={() => { setCloning(false); showGitHistory(); if (path !== repo) void run('open', path, 'Открытие репозитория', setOpened); }}>
             <Icon index={1}/>{repositoryName(path)}
           </button>)}
       </div>
@@ -385,20 +390,28 @@ function App() {
         <button className="operation" title="Import" aria-label="Import" disabled={!!busy} onClick={() => navigate('Импорт')}><OperationIcon name="import"/><span>IMPORT</span></button>
       </div>}
       {repo && <div className="branches" key={repo}>
+        <div className="repo-views">
+          <button aria-pressed={page === 'Репозитории' && !cloning} disabled={!!busy}
+            onClick={() => { setCloning(false); navigate('Репозитории'); }}>Рабочее дерево</button>
+          <button aria-pressed={page === 'История Git' && !historyRef} disabled={!!busy}
+            onClick={() => showGitHistory()}>Все коммиты</button>
+        </div>
         <BranchList label="Локальные ветки" names={git.localBranches} prefix="refs/heads/"
-          expanded active={'refs/heads/' + git.branch} disabled={!!busy} onSelect={selectSnapshotRef}/>
+          expanded active={page === 'История Git' && historyRef ? historyRef : 'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}/>
         <BranchList label="Удалённые ветки" names={git.remoteBranches} prefix="refs/remotes/"
-          disabled={!!busy} onSelect={selectSnapshotRef}/>
+          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>
         {git.tags.length > 0 && <BranchList label="Теги" names={git.tags} prefix="refs/tags/"
-          disabled={!!busy} onSelect={selectSnapshotRef}/>}
+          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
-    <main>
-      <header><h1>{page}</h1></header>
+    <main className={page === 'История Git' ? 'history-page' : undefined}>
+      {page !== 'История Git' && <header><h1>{page}</h1></header>}
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
       {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
       {message && <div role="status" className="notice success">{message}</div>}
       <fieldset disabled={Boolean(busy)}>
+      {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}/>
+        : <p className="empty">Откройте репозиторий, чтобы увидеть историю Git.</p>)}
       {page === 'Приложения' && <>
         <section className="panel">
           <div className="section-title"><h2>Подключённые приложения</h2><button className="primary" onClick={() => editApplication()}>Добавить приложение</button></div>

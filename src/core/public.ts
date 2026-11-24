@@ -8,6 +8,8 @@ export type GitState = {
   branch: string; status: string; head: string;
   localBranches: string[]; remoteBranches: string[]; tags: string[];
 };
+export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
+export type GitCommitFile = { status: string; path: string; previousPath?: string };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
 export type Context = { repo: string; folder: string; profileId: string };
@@ -26,6 +28,9 @@ export type Requests = {
   clone: [{ url: string; path: string }, { repo: string; state: GitState }];
   status: [string, GitState];
   diff: [string, { staged: string; unstaged: string }];
+  gitLog: [{ repo: string; ref?: string; offset: number }, { commits: GitCommit[]; more: boolean }];
+  commitFiles: [{ repo: string; sha: string }, { message: string; files: GitCommitFile[] }];
+  commitPatch: [{ repo: string; sha: string; paths: string[] }, string];
   branch: [{ repo: string; branch: string; create: boolean }, GitState];
   fetch: [string, GitState];
   pull: [string, GitState];

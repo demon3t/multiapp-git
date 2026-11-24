@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
 import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
+import type { GitCommit, GitCommitFile } from './public';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -120,6 +121,60 @@ export async function gitDiff(repo: string) {
     command(repo, ['diff', ...flags])
   ]);
   return { staged, unstaged };
+}
+
+const commitSha = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/;
+const historyPageSize = 200;
+
+export async function gitLog(repo: string, ref: string | undefined, offset: number) {
+  if (!Number.isSafeInteger(offset) || offset < 0) throw new Failure('Неверное смещение истории.');
+  const revisions = ref ? [await resolveCommit(repo, ref)] : ['--branches', '--remotes', '--tags'];
+  if (!ref && await optionalHead(repo)) revisions.push('HEAD');
+  const args = ['log', '--topo-order', '--decorate=full', '--no-notes', '--no-show-signature', '-z',
+    '--format=%H%x00%P%x00%D%x00%an%x00%aI%x00%s', '--skip=' + offset,
+    '--max-count=' + (historyPageSize + 1), ...revisions, '--'];
+  const fields = (await git(repo, args)).toString('utf8').split('\0');
+  const commits: GitCommit[] = [];
+  for (let index = 0; index + 5 < fields.length; index += 6) {
+    const [sha, parents, refs, author, date, subject] = fields.slice(index, index + 6);
+    commits.push({ sha, parents: parents.split(' ').filter(Boolean), refs: refs ? refs.split(', ') : [], author, date, subject });
+  }
+  return { commits: commits.slice(0, historyPageSize), more: commits.length > historyPageSize };
+}
+
+async function commitDiffArgs(repo: string, sha: string) {
+  if (!commitSha.test(sha)) throw new Failure('Укажите полный SHA коммита.');
+  const parents = await command(repo, ['show', '--no-notes', '--no-show-signature', '-s', '--format=%P', sha, '--']);
+  const firstParent = parents.split(' ')[0];
+  const revisions = firstParent ? [firstParent, sha] : [sha];
+  return { flags: ['diff-tree', '--root', '--no-commit-id', '-r',
+    '--no-ext-diff', '--no-textconv', '--no-color', '-M'], revisions };
+}
+
+export async function commitFiles(repo: string, sha: string) {
+  const { flags, revisions } = await commitDiffArgs(repo, sha);
+  const [message, listing] = await Promise.all([
+    command(repo, ['show', '--no-notes', '--no-show-signature', '-s', '--format=%B', sha, '--']),
+    git(repo, [...flags, '--name-status', '-z', ...revisions, '--'])
+  ]);
+  const fields = split(listing.toString('utf8'));
+  const files: GitCommitFile[] = [];
+  for (let index = 0; index < fields.length;) {
+    const status = fields[index++];
+    const path = fields[index++];
+    if (/^[RC]/.test(status)) files.push({ status, previousPath: path, path: fields[index++] });
+    else files.push({ status, path });
+  }
+  return { message, files };
+}
+
+export async function commitPatch(repo: string, sha: string, paths: string[]) {
+  if (!Array.isArray(paths) || paths.length < 1 || paths.length > 2 ||
+      paths.some(path => typeof path !== 'string' || !path || path.includes('\0'))) {
+    throw new Failure('Выберите файл коммита.');
+  }
+  const { flags, revisions } = await commitDiffArgs(repo, sha);
+  return (await git(repo, ['--literal-pathspecs', ...flags, '-p', ...revisions, '--', ...paths])).toString('utf8');
 }
 async function assertClean(repo: string) {
   const status = await gitStatus(repo);

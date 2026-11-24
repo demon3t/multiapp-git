@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync, spawn } = require('node:child_process');
-const { mkdir, mkdtemp, readFile, realpath, rm } = require('node:fs/promises');
+const { mkdir, mkdtemp, readFile, realpath, rm, writeFile } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { once } = require('node:events');
@@ -13,10 +13,23 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   await mkdir(repo);
   execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'pipe' });
   const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
-  git('-c', 'user.name=mGit test', '-c', 'user.email=test@example.invalid', 'commit', '--allow-empty', '-m', 'Initial commit');
-  git('branch', 'feature/ui/compact');
+  git('config', 'user.name', 'mGit test');
+  git('config', 'user.email', 'test@example.invalid');
+  await writeFile(join(repo, 'README.md'), '# Superset configuration\n');
+  git('add', 'README.md');
+  git('commit', '-m', 'Initialize the configuration repository');
+  git('switch', '-c', 'feature/ui/compact');
+  await mkdir(join(repo, 'snapshots'));
+  await writeFile(join(repo, 'snapshots', 'metadata.yaml'), 'type: assets\nversion: 1.0.0\n');
+  git('add', 'snapshots');
+  git('commit', '-m', 'Add the Superset snapshot');
+  git('switch', 'main');
+  await writeFile(join(repo, 'README.md'), '# Superset configuration\n\nLocal snapshots are versioned in Git.\n');
+  git('commit', '-am', 'Document the local snapshot workflow');
+  git('merge', '--no-ff', 'feature/ui/compact', '-m', 'Merge the Superset snapshot');
+  git('tag', 'v1.0.0');
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
-  git('update-ref', 'refs/remotes/origin/feature/ui/compact', 'HEAD');
+  git('update-ref', 'refs/remotes/origin/feature/ui/compact', 'feature/ui/compact');
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   const app = spawn(resolve('release/win-unpacked/mGit.exe'), [
     '--user-data-dir=' + profile, '--remote-debugging-port=0'
@@ -158,7 +171,7 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'),
     ['PULL', 'FETCH', 'PUSH', 'EXPORT', 'IMPORT']);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group > summary"), item => item.textContent)'),
-    ['Локальные ветки', 'Удалённые ветки']);
+    ['Локальные ветки', 'Удалённые ветки', 'Теги']);
   assert.equal(await evaluate('document.querySelectorAll(".branch-group")[1].open'), false);
   await evaluate('document.querySelectorAll(".branch-group > summary")[1].click()');
   assert.equal(await evaluate('document.querySelectorAll(".branch-group")[1].open'), true);
@@ -167,5 +180,19 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll("button"), item => item.textContent)'),
     ['compact', 'main']);
   await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
+  const rowCount = 'document.querySelectorAll(".commit-row").length';
+  for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 2; attempt++) await wait(100);
+  assert.equal(await evaluate(rowCount), 2);
+  await evaluate('document.querySelector(".repo-views button:last-child").click()');
+  for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 4; attempt++) await wait(100);
+  assert.equal(await evaluate(rowCount), 4);
+  assert.match(await evaluate('document.querySelector(".commit-row").textContent'), /v1\.0\.0.*Merge the Superset snapshot/);
+  for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector(".commit-patch .patch-added")')); attempt++) await wait(100);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".commit-files button"), button => button.title)'), ['snapshots/metadata.yaml']);
+  assert.match(await evaluate('document.querySelector(".commit-patch pre")?.textContent'), /\+type: assets/);
+  assert(await evaluate('(() => { const lines = document.querySelectorAll(".commit-patch pre span"); return lines[1].offsetTop > lines[0].offsetTop; })()'));
+  await evaluate('document.querySelector(".commit-tabs button:first-child").click()');
+  assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
+  await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
   assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
 });
