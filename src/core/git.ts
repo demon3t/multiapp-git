@@ -5,20 +5,21 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
 import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
-import type { GitCommit, GitCommitFile } from './public';
+import type { GitCommit, GitCommitFile, WorkingFile } from './public';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
 const modes = new Set(['100644', '100755']);
 
-async function git(cwd: string, args: string[]) {
+async function git(cwd: string, args: string[], diffExit = false) {
   try {
     const { stdout } = await run('git', ['-c', 'core.quotepath=false', ...args], {
       cwd, env, maxBuffer: maxBytes + 1024 * 1024, timeout: 120_000, windowsHide: true, encoding: 'buffer'
     });
     return stdout;
   } catch (error) {
-    const e = error as { code?: string | number; stderr?: Buffer; killed?: boolean };
+    const e = error as { code?: string | number; stderr?: Buffer; stdout?: Buffer; killed?: boolean };
+    if (diffExit && e.code === 1 && e.stdout) return e.stdout;
     const diagnostic = e.stderr?.toString() ?? '';
     let reason = 'Проверьте репозиторий, права и настройки Git.';
     if (e.code === 'ENOENT') reason = 'Установите Git и добавьте его в PATH.';
@@ -95,9 +96,9 @@ async function optionalHead(repo: string) {
   return '';
 }
 export async function gitStatus(repo: string) {
-  const [branch, status, refs, head] = await Promise.all([
+  const [branch, files, refs, head] = await Promise.all([
     command(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
-    command(repo, ['status', '--porcelain=v1', '--untracked-files=all']),
+    workingFiles(repo),
     command(repo, ['for-each-ref', '--format=%(refname)%09%(symref)', 'refs/heads', 'refs/remotes', 'refs/tags']),
     optionalHead(repo)
   ]);
@@ -112,7 +113,52 @@ export async function gitStatus(repo: string) {
     if (ref.startsWith('refs/tags/')) tags.push(ref.slice('refs/tags/'.length));
   }
   if (branch && !localBranches.includes(branch)) localBranches.push(branch);
-  return { branch, status, localBranches, remoteBranches, tags, head };
+  const status = files.map(file => file.index + file.worktree + ' ' +
+    (file.previousPath ? file.previousPath + ' -> ' : '') + file.path).join('\n');
+  return { branch, status, files, localBranches, remoteBranches, tags, head };
+}
+async function workingFiles(repo: string): Promise<WorkingFile[]> {
+  const fields = split((await git(repo, ['status', '--porcelain=v1', '-z', '--untracked-files=all'])).toString('utf8'));
+  const files: WorkingFile[] = [];
+  for (let i = 0; i < fields.length; i++) {
+    const [index, worktree] = fields[i];
+    const path = fields[i].slice(3);
+    const previousPath = /[RC]/.test(index + worktree) ? fields[++i] : undefined;
+    files.push({ path, index, worktree, ...(previousPath && { previousPath }) });
+  }
+  return files;
+}
+
+async function currentWorkingFile(repo: string, path: string, staged: boolean) {
+  const file = (await workingFiles(repo)).find(item => item.path === path &&
+    (staged ? item.index !== ' ' && item.index !== '?' : item.worktree !== ' '));
+  if (!file) throw new Failure('Состояние файла изменилось. Обновите рабочее дерево.', 'git');
+  return file;
+}
+
+export async function workingPatch(repo: string, path: string, staged: boolean) {
+  const file = await currentWorkingFile(repo, path, staged);
+  const flags = ['--no-ext-diff', '--no-textconv', '--no-color'];
+  if (file.index === '?') {
+    return (await git(repo, ['diff', '--no-index', ...flags, '--', '/dev/null', path], true)).toString('utf8');
+  }
+  const paths = file.previousPath ? [file.previousPath, file.path] : [file.path];
+  return command(repo, ['--literal-pathspecs', 'diff', ...flags, ...(staged ? ['--cached'] : []), '--', ...paths]);
+}
+
+export async function stageFile(repo: string, path: string, staged: boolean) {
+  const file = await currentWorkingFile(repo, path, staged);
+  const status = file.index + file.worktree;
+  const paths = file.previousPath && status.includes('R') ? [file.previousPath, file.path] : [file.path];
+  const args = !staged ? ['add', '-A'] : await optionalHead(repo) ? ['restore', '--staged'] : ['rm', '--cached', '-f'];
+  await git(repo, ['--literal-pathspecs', ...args, '--', ...paths]);
+  return gitStatus(repo);
+}
+
+export async function commitStaged(repo: string, message: string) {
+  if (!message.trim() || message.length > 4000) throw new Failure('Введите сообщение коммита.');
+  await git(repo, ['commit', '-m', message.trim()]);
+  return gitStatus(repo);
 }
 export async function gitDiff(repo: string) {
   const flags = ['--no-ext-diff', '--no-textconv', '--no-color'];

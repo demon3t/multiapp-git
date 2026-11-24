@@ -7,7 +7,7 @@ const { join, resolve } = require('node:path');
 const { once } = require('node:events');
 const { setTimeout: wait } = require('node:timers/promises');
 
-test('packaged mGit adds a Superset application with its Git repository', { timeout: 60_000 }, async t => {
+test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_000 }, async t => {
   const profile = await mkdtemp(join(tmpdir(), 'mgit-desktop-'));
   const repo = join(profile, 'repo');
   await mkdir(repo);
@@ -142,6 +142,7 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.equal(initialized.ok, true, JSON.stringify(initialized));
   assert.equal(initialized.data.state.branch, 'main');
   assert.equal(initialized.data.state.head, '');
+  assert.equal(initialized.data.profiles[0].type, 'git');
   assert.deepEqual(await evaluate('window.mgit.call("open", ' + JSON.stringify(initialized.data.repo) + ')'), initialized);
   assert.equal(await evaluate('document.querySelectorAll("nav button").length'), 0);
   await evaluate('document.querySelector(".new-tab").click()');
@@ -168,19 +169,20 @@ test('packaged mGit adds a Superset application with its Git repository', { time
     });
   })()`);
   await evaluate('document.querySelector("form").requestSubmit()');
-  for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector(".app-tabs button")')); attempt++) await wait(100);
-  assert.equal(await evaluate('document.querySelector(".app-tabs button")?.textContent'), '127.0.0.1:18088');
+  const selectedTab = 'document.querySelector(".app-tabs button[aria-pressed=true]")?.textContent';
+  for (let attempt = 0; attempt < 30 && await evaluate(selectedTab) !== '127.0.0.1:18088'; attempt++) await wait(100);
+  assert.equal(await evaluate(selectedTab), '127.0.0.1:18088');
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector(".branch-status")')); attempt++) await wait(100);
   assert.equal(await evaluate('document.querySelector(".branch-status")?.textContent'), 'main');
   const saved = await evaluate('window.mgit.call("profiles")');
   assert.equal(saved.ok, true, JSON.stringify(saved));
-  assert.equal(saved.data[0].repo, await realpath(repo));
-  assert.equal(saved.data[0].name, '127.0.0.1:18088');
-  assert.equal(saved.data[0].type, 'superset');
-  assert.equal(Object.hasOwn(saved.data[0], 'environment'), false);
-  const updated = await evaluate('window.mgit.call("save", ' + JSON.stringify({ ...input, id: saved.data[0].id }) + ')');
+  const supersetProfile = saved.data.find(item => item.type === 'superset');
+  assert.equal(supersetProfile.repo, await realpath(repo));
+  assert.equal(supersetProfile.name, '127.0.0.1:18088');
+  assert.equal(Object.hasOwn(supersetProfile, 'environment'), false);
+  const updated = await evaluate('window.mgit.call("save", ' + JSON.stringify({ ...input, id: supersetProfile.id }) + ')');
   assert.equal(updated.ok, true, JSON.stringify(updated));
-  assert.deepEqual(updated.data[0].mappingIds, ['c1000000-0000-4000-8000-000000000001']);
+  assert.deepEqual(updated.data.find(item => item.type === 'superset').mappingIds, ['c1000000-0000-4000-8000-000000000001']);
   const stored = await readFile(join(profile, 'mgit.json'), 'utf8');
   assert(!stored.includes('assert-dpapi-credential'));
   assert(!stored.includes('assert-dpapi-uri'));
@@ -212,4 +214,55 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
   assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
+
+  const localRepo = initialized.data.repo;
+  const localGit = (...args) => execFileSync('git', args, { cwd: localRepo, encoding: 'utf8' });
+  localGit('config', 'user.name', 'mGit test');
+  localGit('config', 'user.email', 'test@example.invalid');
+  await writeFile(join(localRepo, 'README.md'), '# Project notes\n');
+  await writeFile(join(localRepo, 'notes [draft].txt'), 'Keep this local\n');
+  await evaluate('document.querySelector(".brand").click()');
+  await devtools('Page.reload', {});
+  const localTab = 'Array.from(document.querySelectorAll(".app-tabs button")).find(button => button.textContent === "initialized")';
+  for (let attempt = 0; attempt < 50 && !(await evaluate('!!(' + localTab + ')')); attempt++) await wait(100);
+  await evaluate(localTab + '.click()');
+  const file = '.working-file-name[title="README.md"]';
+  const fileButton = 'document.querySelector(' + JSON.stringify(file) + ')';
+  for (let attempt = 0; attempt < 50 && !(await evaluate('!!' + fileButton + ' && !' + fileButton + '.matches(":disabled")')); attempt++) await wait(100);
+  assert.equal(await evaluate('!!' + fileButton), true, await evaluate('document.querySelector("main")?.innerText'));
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), ['PULL', 'FETCH', 'PUSH']);
+  await evaluate('document.querySelector(' + JSON.stringify(file) + ').click()');
+  const patch = 'document.querySelector(".working-file-patch pre")?.textContent';
+  for (let attempt = 0; attempt < 30 && !(await evaluate(patch)); attempt++) await wait(100);
+  assert.match(await evaluate(patch) ?? '', /\+# Project notes/, await evaluate('document.querySelector("main")?.innerText'));
+  const stage = 'document.querySelector(' + JSON.stringify(file) + ').nextElementSibling.click()';
+  await evaluate(stage);
+  const index = 'document.querySelectorAll(".working-file-group:nth-child(2) li").length';
+  for (let attempt = 0; attempt < 30 && await evaluate(index) !== 1; attempt++) await wait(100);
+  assert.equal(localGit('diff', '--cached', '--name-only').trim(), 'README.md');
+  await evaluate(stage);
+  for (let attempt = 0; attempt < 30 && await evaluate(index) !== 0; attempt++) await wait(100);
+  assert.match(localGit('status', '--short'), /\?\? README\.md/);
+  await evaluate(stage);
+  for (let attempt = 0; attempt < 30 && await evaluate(index) !== 1; attempt++) await wait(100);
+  if (process.env.MGIT_TEST_GIT_SCREENSHOT) {
+    await evaluate('document.querySelector(' + JSON.stringify(file) + ').click()');
+    for (let attempt = 0; attempt < 30 && !(await evaluate(patch)); attempt++) await wait(100);
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_GIT_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  await evaluate(`(() => {
+    const field = document.querySelector('.working-files input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, 'Add project notes');
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.form.requestSubmit();
+  })()`);
+  for (let attempt = 0; attempt < 30 && await evaluate(index) !== 0; attempt++) await wait(100);
+  assert.equal(localGit('log', '-1', '--format=%s').trim(), 'Add project notes');
+  assert.equal(localGit('ls-files').trim(), 'README.md');
+  assert.equal(await readFile(join(localRepo, 'notes [draft].txt'), 'utf8'), 'Keep this local\n');
+  const plain = JSON.parse(await readFile(join(profile, 'mgit.json'), 'utf8')).profiles.find(item => item.type === 'git');
+  assert.deepEqual(Object.keys(plain.profile).sort(), ['id', 'name']);
+  assert.equal(plain.repo, localRepo);
+  assert.equal(Object.hasOwn(plain, 'encrypted'), false);
 });

@@ -161,3 +161,13 @@ label{gap:4px;font-size:12px}.form-grid{gap:9px;margin-top:8px}.actions{gap:5px;
 .commit-info dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px;margin:3px 0 10px}
 .commit-info dd{margin:0;overflow-wrap:anywhere}
 @media(max-width:1000px){.shell{grid-template-columns:176px minmax(0,1fr)}.context{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.working-file-groups{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:9px}
+.working-file-group,.working-file-patch{min-width:0;border:1px solid #d5dae3;border-radius:4px;padding:8px}
+.working-file-group ul{list-style:none;padding:0;margin:6px 0 0;max-height:210px;overflow:auto}
+.working-file-group li{display:flex;align-items:center;gap:5px;margin-top:3px}
+.working-file-name{display:flex;gap:6px;flex:1;min-width:0;align-items:center;text-align:left}
+.working-file-name span:last-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.working-file-name[aria-pressed=true]{background:#e0eafa;color:#19599e}
+.working-file-patch{margin-top:8px}
+.working-file-patch pre{margin:6px 0 0;max-height:280px;overflow:auto}
+.working-file-patch pre span{display:block;white-space:pre}
