@@ -1,0 +1,81 @@
+name: Build and release
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Set build version
+        id: version
+        shell: pwsh
+        run: |
+          $baseVersion = node -p "require('./package.json').version"
+          $version = "$baseVersion-build.$env:GITHUB_RUN_NUMBER"
+          npm version $version --no-git-tag-version --allow-same-version
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          "version=$version" >> $env:GITHUB_OUTPUT
+      - run: npm test
+      - run: npm run dist
+      - run: node --test tests/desktop.cjs
+      - uses: actions/upload-artifact@v5
+        with:
+          name: mgit-windows-x64
+          path: release/mGit-Windows-x64-Setup.exe
+          if-no-files-found: error
+
+  release:
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: mgit-windows-x64
+          path: upload
+      - name: Publish release
+        shell: bash
+        run: |
+          tag="v$VERSION"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+              --title "mGit $VERSION" --generate-notes --draft
+          fi
+          asset=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets \
+            --jq '.assets[] | select(.name == "mGit-Windows-x64-Setup.exe" and .state == "uploaded") | .name')
+          draft=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          if [ "$draft" = true ]; then
+            if [ -z "$asset" ]; then
+              gh release upload "$tag" upload/mGit-Windows-x64-Setup.exe --repo "$GITHUB_REPOSITORY" --clobber
+            fi
+            gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+          else
+            test "$asset" = mGit-Windows-x64-Setup.exe
+          fi

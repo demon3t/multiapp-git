@@ -205,14 +205,21 @@ function App() {
           <p role="status">{update?.message ?? ({
             idle: 'Проверьте наличие новой версии на GitHub.', checking: 'Проверяем GitHub…',
             current: 'У вас актуальная версия.', available: 'Доступна версия ' + update?.latest + '.',
+            downloading: 'Загрузка установщика · ' + (update?.progress ?? 0) + '%',
+            ready: 'Обновление ' + update?.latest + ' готово к установке.', installing: 'Запускаем установщик…',
             'no-release': 'В репозитории пока нет опубликованных релизов.', error: 'Проверка не завершилась.'
           }[update?.status ?? 'idle'])}</p>
           <div className="actions">
             <button disabled={!!busy || update?.status === 'checking'} onClick={() => run('checkUpdate', undefined, 'Проверка обновлений', setUpdate)}>Проверить сейчас</button>
+            {update?.canInstall && ['available', 'ready'].includes(update.status) &&
+              <button className="primary" disabled={!!busy} onClick={() => run('installUpdate', undefined, 'Обновление mGit', setUpdate)}>Обновить и перезапустить</button>}
             <button onClick={() => run('openReleases', undefined, 'Открытие GitHub')}>Релизы на GitHub</button>
           </div>
           <label className="check"><input type="checkbox" checked={update?.automatic === true} disabled={!!busy} onChange={e =>
             run('saveUpdateSettings', { automatic: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Проверять автоматически</label>
+          <label className="check"><input type="checkbox" checked={update?.automatic === true && update?.autoInstall === true}
+            disabled={!!busy || update?.automatic !== true} onChange={e =>
+              run('saveUpdateSettings', { automatic: true, autoInstall: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Скачивать и устанавливать при выходе</label>
           <form onSubmit={e => {
             e.preventDefault();
             void run('saveUpdateSettings', { automatic: update?.automatic === true, token }, 'Сохранение токена', result => {

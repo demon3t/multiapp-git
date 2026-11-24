@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
 import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model';
@@ -8,10 +9,10 @@ import * as git from './core/git';
 import { Superset } from './core/superset';
 import { prepareSnapshot, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
-import { checkRelease, releasesPage, UpdateStatus } from './core/updates';
+import { checkRelease, downloadInstaller, releasesPage, UpdateStatus } from './core/updates';
 
 type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
-type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; encryptedToken?: string } };
+type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean; encryptedToken?: string } };
 let state: State;
 let window: BrowserWindow;
 let busy = false;
@@ -21,7 +22,20 @@ const path = () => join(app.getPath('userData'), 'mgit.json');
 let releaseStatus: UpdateStatus = { current: app.getVersion(), status: 'idle' };
 let updateCheck: Promise<ReturnType<typeof updateView>> | undefined;
 let updateTimer: NodeJS.Timeout | undefined;
-const updateView = () => ({ ...releaseStatus, automatic: state.updates?.automatic, hasToken: Boolean(state.updates?.encryptedToken) });
+let installer: string | undefined;
+let updateDownload: Promise<void> | undefined;
+let launchingInstaller = false;
+let quitForUpdate = false;
+const updatesSupported = () => app.isPackaged && process.platform === 'win32' && process.arch === 'x64';
+const updateView = () => {
+  const { asset, ...status } = releaseStatus;
+  return { ...status, canInstall: Boolean(asset && updatesSupported()), automatic: state.updates?.automatic,
+    autoInstall: state.updates?.autoInstall, hasToken: Boolean(state.updates?.encryptedToken) };
+};
+function updateToken() {
+  const encrypted = state.updates?.encryptedToken;
+  return encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '';
+}
 
 function reportUpdate() {
   if (window && !window.isDestroyed()) window.webContents.send('mgit:update', updateView());
@@ -33,13 +47,12 @@ function scheduleUpdate(delay: number) {
 }
 function checkUpdate() {
   if (updateCheck) return updateCheck;
+  if (updateDownload || installer || launchingInstaller) return Promise.resolve(updateView());
   updateCheck = (async () => {
     releaseStatus = { current: app.getVersion(), status: 'checking' };
     reportUpdate();
     try {
-      const encrypted = state.updates?.encryptedToken;
-      const token = encrypted ? safeStorage.decryptString(Buffer.from(encrypted, 'base64')) : '';
-      releaseStatus = await checkRelease(app.getVersion(), token, (url, options) => net.fetch(url, options));
+      releaseStatus = await checkRelease(app.getVersion(), updateToken(), (url, options) => net.fetch(url, options));
     } catch {
       releaseStatus = { current: app.getVersion(), status: 'error', message: 'Не удалось прочитать защищённый токен GitHub. Сохраните его заново.' };
     }
@@ -47,8 +60,36 @@ function checkUpdate() {
   })().finally(() => {
     updateCheck = undefined;
     scheduleUpdate(24 * 60 * 60 * 1000);
+    autoDownload();
   });
   return updateCheck;
+}
+
+function fetchUpdate() {
+  if (updateDownload) return updateDownload;
+  const asset = releaseStatus.asset;
+  if (installer) return Promise.resolve();
+  if (!asset || !updatesSupported()) throw new Failure('Проверенный установщик для этой сборки недоступен.');
+  releaseStatus = { ...releaseStatus, status: 'downloading', progress: 0, message: undefined };
+  reportUpdate();
+  updateDownload = Promise.resolve().then(async () => {
+    installer = await downloadInstaller(asset, app.getVersion(), updateToken(), app.getPath('temp'), fetch, progress => {
+      releaseStatus.progress = progress;
+      reportUpdate();
+    });
+    releaseStatus.status = 'ready';
+  }).catch(() => {
+    const message = 'Не удалось загрузить или проверить установщик. Повторите попытку.';
+    releaseStatus = { ...releaseStatus, status: 'available', message };
+    throw new Failure(message);
+  }).finally(() => { updateDownload = undefined; reportUpdate(); });
+  return updateDownload;
+}
+
+function autoDownload() {
+  if (state.updates?.automatic && state.updates.autoInstall && releaseStatus.status === 'available' && updateView().canInstall) {
+    void fetchUpdate().catch(() => undefined);
+  }
 }
 
 async function persist(next: State) {
@@ -194,24 +235,39 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   history: () => state.history,
   updateStatus: updateView,
   checkUpdate,
+  async installUpdate() {
+    if (busy || launchingInstaller) throw new Failure('Дождитесь завершения текущей операции.');
+    await fetchUpdate();
+    if (busy) throw new Failure('Дождитесь завершения текущей операции.');
+    quitForUpdate = true;
+    setImmediate(() => app.quit());
+    return updateView();
+  },
   async saveUpdateSettings(input) {
-    if (typeof input.automatic !== 'boolean') throw new Failure('Укажите, включать ли автоматическую проверку.');
+    if (typeof input.automatic !== 'boolean' || (input.autoInstall !== undefined && typeof input.autoInstall !== 'boolean')) {
+      throw new Failure('Проверьте настройки автоматического обновления.');
+    }
     const token = input.token?.trim();
     let encryptedToken = input.clearToken ? undefined : state.updates?.encryptedToken;
-    if ((token || input.clearToken) && updateCheck) throw new Failure('Дождитесь завершения проверки перед сменой токена.');
+    if ((token || input.clearToken) && (updateCheck || updateDownload || launchingInstaller)) throw new Failure('Дождитесь завершения обновления перед сменой токена.');
     if (token) {
       if (token.length > 512 || !/^[\w-]+$/.test(token)) throw new Failure('Проверьте формат токена GitHub.');
       if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
       encryptedToken = safeStorage.encryptString(token).toString('base64');
     }
-    await persist({ ...state, updates: { automatic: input.automatic, encryptedToken } });
-    if (!updateCheck && (token || input.clearToken)) releaseStatus = { current: app.getVersion(), status: 'idle' };
+    await persist({ ...state, updates: { automatic: input.automatic, autoInstall: input.autoInstall ?? state.updates?.autoInstall, encryptedToken } });
+    if (token || input.clearToken) {
+      if (installer) await fs.rm(installer, { force: true }).catch(() => undefined);
+      installer = undefined;
+      releaseStatus = { current: app.getVersion(), status: 'idle' };
+    }
     scheduleUpdate(15_000);
+    autoDownload();
     return reportUpdate();
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
@@ -266,3 +322,23 @@ else {
   });
 }
 app.on('window-all-closed', () => app.quit());
+app.on('before-quit', event => {
+  if (!installer || busy || launchingInstaller || !(quitForUpdate || (state.updates?.automatic && state.updates.autoInstall))) return;
+  event.preventDefault();
+  launchingInstaller = true;
+  releaseStatus.status = 'installing';
+  reportUpdate();
+  const process = spawn(installer, ['--updated', '/S', ...(quitForUpdate ? ['--force-run'] : [])],
+    { detached: true, stdio: 'ignore' });
+  process.once('spawn', () => {
+    process.unref();
+    app.quit();
+  });
+  process.once('error', () => {
+    launchingInstaller = false;
+    quitForUpdate = false;
+    releaseStatus = { ...releaseStatus, status: 'ready', message: 'Не удалось запустить установщик.' };
+    reportUpdate();
+    if (!window || window.isDestroyed()) app.exit();
+  });
+});

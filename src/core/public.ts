@@ -3,7 +3,7 @@ import type { Environment, Issue, Profile } from './model';
 import type { UpdateStatus } from './updates';
 
 export type { Change, Environment, Profile };
-export type UpdateView = UpdateStatus & { automatic?: boolean; hasToken: boolean };
+export type UpdateView = Omit<UpdateStatus, 'asset'> & { automatic?: boolean; autoInstall?: boolean; canInstall: boolean; hasToken: boolean };
 export type GitState = { branch: string; status: string; head: string; branches: string[] };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
@@ -37,7 +37,8 @@ export type Requests = {
   history: [undefined, Entry[]];
   updateStatus: [undefined, UpdateView];
   checkUpdate: [undefined, UpdateView];
-  saveUpdateSettings: [{ automatic: boolean; token?: string; clearToken?: boolean }, UpdateView];
+  installUpdate: [undefined, UpdateView];
+  saveUpdateSettings: [{ automatic: boolean; autoInstall?: boolean; token?: string; clearToken?: boolean }, UpdateView];
   openReleases: [undefined, void];
 };
 export type Response<T> = { ok: true; data: T } | { ok: false; message: string; code: string; details?: unknown };
