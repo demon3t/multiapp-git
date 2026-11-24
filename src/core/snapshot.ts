@@ -231,6 +231,9 @@ export function selectAssets(files: Files, selected: string[]) {
 export function summarize(assets: Asset[]) {
   return Object.fromEntries(kinds.map(kind => [kind, assets.filter(asset => asset.kind === kind).length]));
 }
+function parseJson(value: string): unknown {
+  try { return JSON.parse(value); } catch { return undefined; }
+}
 export function materialize(files: Files, connections: Record<string, string>) {
   const assets = assertValid(files);
   const output = new Map(files);
@@ -242,6 +245,19 @@ export function materialize(files: Files, connections: Record<string, string>) {
   }
   const passwords: Record<string, string> = {};
   for (const asset of assets) {
+    if (asset.kind === 'charts' && typeof asset.data.query_context === 'string') {
+      const context = object(parseJson(asset.data.query_context));
+      if (typeof context.form_data === 'string') {
+        const formData = parseJson(context.form_data);
+        if (!formData || formData !== object(formData)) {
+          throw new Failure('Некорректный query_context.form_data у графика.', 'validation', [{ path: asset.path }]);
+        }
+        context.form_data = formData;
+        const document = parseDocument(files.get(asset.path)!);
+        document.set('query_context', JSON.stringify(context));
+        output.set(asset.path, document.toString({ lineWidth: 0 }));
+      }
+    }
     if (asset.kind !== 'databases') continue;
     const connection = connections[asset.uuid];
     if (!connection || /[\r\n\0]/.test(connection) || !/^[a-z][a-z0-9+_-]*:\/\//i.test(connection)) {

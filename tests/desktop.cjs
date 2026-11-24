@@ -6,10 +6,52 @@ const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const { once } = require('node:events');
 const { setTimeout: wait } = require('node:timers/promises');
+const { createServer } = require('node:http');
+const { fixture, ids, path } = require('./fixture.cjs');
+const { pack } = require('../dist/core/zip');
 
-test('packaged mGit adds a Superset application with its Git repository', { timeout: 60_000 }, async t => {
+async function testSuperset(t) {
+  const files = fixture();
+  const resources = { database: 'database', dataset: 'dataset', chart: 'chart', dashboard: 'dashboard', saved_query: 'query' };
+  const batches = new Map(await Promise.all(Object.values(resources).map(async kind => [kind,
+    await pack(new Map([['metadata.yaml', files.get('metadata.yaml')], [path[kind], files.get(path[kind])]]))])));
+  const empty = await pack(new Map([['metadata.yaml', files.get('metadata.yaml')]]));
+  const full = await pack(files);
+  const calls = { imports: 0 };
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, 'http://localhost');
+    const json = body => {
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify(body));
+    };
+    switch (url.pathname) {
+      case '/api/v1/security/login': return json({ access_token: 'test-token' });
+      case '/api/v1/security/csrf_token/': return json({ result: 'test-csrf' });
+      case '/api/v1/me/roles/': return json({ result: { roles: ['Admin'] } });
+      case '/api/v1/_openapi': return json({ info: { version: '6.1.0' }, paths: {
+        '/api/v1/assets/export/': { get: {} }, '/api/v1/assets/import/': { post: {} }
+      } });
+      case '/api/v1/assets/export/': return response.end(calls.imports ? full : empty);
+      case '/api/v1/assets/import/':
+        for await (const chunk of request) { assert(chunk.length > 0); }
+        calls.imports++;
+        return json({ message: 'OK' });
+    }
+    const match = /^\/api\/v1\/([^/]+)\/(export\/)?$/.exec(url.pathname);
+    const kind = resources[match?.[1]];
+    if (!kind) { response.writeHead(404).end(); return; }
+    if (match[2]) return response.end(batches.get(kind));
+    return json({ count: 1, result: [{ id: 1, uuid: ids[kind] }] });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  return { url: 'http://127.0.0.1:' + server.address().port, calls };
+}
+
+test('packaged mGit switches Git branches and runs Superset operations in one click', { timeout: 60_000 }, async t => {
   const profile = await mkdtemp(join(tmpdir(), 'mgit-desktop-'));
   const repo = join(profile, 'repo');
+  const superset = await testSuperset(t);
   await mkdir(repo);
   execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'pipe' });
   const git = (...args) => execFileSync('git', args, { cwd: repo, stdio: 'pipe' });
@@ -28,8 +70,10 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   git('commit', '-am', 'Document the local snapshot workflow');
   git('merge', '--no-ff', 'feature/ui/compact', '-m', 'Merge the Superset snapshot');
   git('tag', 'v1.0.0');
+  git('remote', 'add', 'origin', repo);
   git('update-ref', 'refs/remotes/origin/main', 'HEAD');
   git('update-ref', 'refs/remotes/origin/feature/ui/compact', 'feature/ui/compact');
+  git('update-ref', 'refs/remotes/origin/test/remote', 'main');
   git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
   const app = spawn(resolve('release/win-unpacked/mGit.exe'), [
     '--user-data-dir=' + profile, '--remote-debugging-port=0'
@@ -154,7 +198,7 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   })()`);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("form label"), x => x.firstChild.textContent)'),
     ['Тип приложения', 'Папка Git', 'URL Superset', 'Авторизация', 'Пользователь', 'Пароль']);
-  const input = { name: '', type: 'superset', repo, url: 'http://127.0.0.1:18088', auth: 'db',
+  const input = { name: '', type: 'superset', repo, url: superset.url, auth: 'db',
     username: 'desktop', credential: 'assert-dpapi-credential', mappings: 'c1000000-0000-4000-8000-000000000001 postgresql://desktop:assert-dpapi-uri@local/test' };
   for (const invalid of [{ ...input, repo: '' }, { ...input, type: '' }, { ...input, repo: profile }]) {
     assert.equal((await evaluate('window.mgit.call("save", ' + JSON.stringify(invalid) + ')')).ok, false);
@@ -169,13 +213,13 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   })()`);
   await evaluate('document.querySelector("form").requestSubmit()');
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector(".app-tabs button")')); attempt++) await wait(100);
-  assert.equal(await evaluate('document.querySelector(".app-tabs button")?.textContent'), '127.0.0.1:18088');
+  assert.equal(await evaluate('document.querySelector(".app-tabs button")?.textContent'), new URL(superset.url).host);
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector(".branch-status")')); attempt++) await wait(100);
   assert.equal(await evaluate('document.querySelector(".branch-status")?.textContent'), 'main');
   const saved = await evaluate('window.mgit.call("profiles")');
   assert.equal(saved.ok, true, JSON.stringify(saved));
   assert.equal(saved.data[0].repo, await realpath(repo));
-  assert.equal(saved.data[0].name, '127.0.0.1:18088');
+  assert.equal(saved.data[0].name, new URL(superset.url).host);
   assert.equal(saved.data[0].type, 'superset');
   assert.equal(Object.hasOwn(saved.data[0], 'environment'), false);
   const updated = await evaluate('window.mgit.call("save", ' + JSON.stringify({ ...input, id: saved.data[0].id }) + ')');
@@ -193,13 +237,14 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   await evaluate('document.querySelectorAll(".branch-group > summary")[1].click()');
   assert.equal(await evaluate('document.querySelectorAll(".branch-group")[1].open'), true);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll(":scope ul details > summary"), item => item.textContent)'),
-    ['origin', 'feature', 'ui']);
+    ['origin', 'feature', 'ui', 'test']);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll("button"), item => item.textContent)'),
-    ['compact', 'main']);
+    ['compact', 'main', 'remote']);
   await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
   const rowCount = 'document.querySelectorAll(".commit-row").length';
   for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 2; attempt++) await wait(100);
   assert.equal(await evaluate(rowCount), 2);
+  assert.equal(git('branch', '--show-current').toString().trim(), 'main');
   await evaluate('document.querySelector(".repo-views button:last-child").click()');
   for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 4; attempt++) await wait(100);
   assert.equal(await evaluate(rowCount), 4);
@@ -210,6 +255,40 @@ test('packaged mGit adds a Superset application with its Git repository', { time
   assert(await evaluate('(() => { const lines = document.querySelectorAll(".commit-patch pre span"); return lines[1].offsetTop > lines[0].offsetTop; })()'));
   await evaluate('document.querySelector(".commit-tabs button:first-child").click()');
   assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
+  const doubleClick = ref => evaluate(`Array.from(document.querySelectorAll(".branch-ref")).find(button => button.title.startsWith(${JSON.stringify(ref + ' ·')})).dispatchEvent(new MouseEvent("dblclick", { bubbles: true }))`);
+  const branchStatus = 'document.querySelector(".branch-status")?.textContent';
+  await doubleClick('refs/heads/feature/ui/compact');
+  for (let attempt = 0; attempt < 30 && await evaluate(branchStatus) !== 'feature/ui/compact'; attempt++) await wait(100);
+  assert.equal(await evaluate(branchStatus), 'feature/ui/compact');
+  assert.equal(git('branch', '--show-current').toString().trim(), 'feature/ui/compact');
+  assert.doesNotMatch(await readFile(join(repo, 'README.md'), 'utf8'), /Local snapshots/);
+
+  await doubleClick('refs/remotes/origin/test/remote');
+  for (let attempt = 0; attempt < 30 && await evaluate(branchStatus) !== 'test/remote'; attempt++) await wait(100);
+  assert.equal(await evaluate(branchStatus), 'test/remote');
+  assert.equal(git('rev-parse', '--symbolic-full-name', '@{upstream}').toString().trim(), 'refs/remotes/origin/test/remote');
+  assert.match(await readFile(join(repo, 'README.md'), 'utf8'), /Local snapshots/);
+
+  await evaluate('document.querySelector(".operation[aria-label=Export]").click()');
+  for (let attempt = 0; attempt < 50 && !(await evaluate('!!document.querySelector(".diff-files")')); attempt++) await wait(100);
+  assert.equal(await evaluate('document.querySelector("h1").textContent'), 'Экспорт');
+  assert.equal(await evaluate('!!document.querySelector(".diff-files")'), true, await evaluate('document.querySelector("main")?.innerText?.slice(0, 400)'));
+  assert.match(await readFile(join(repo, 'snapshots', 'test', 'remote', 'assets', 'metadata.yaml'), 'utf8'), /type: assets/);
+  assert.equal(git('branch', '--show-current').toString().trim(), 'test/remote');
+
+  git('add', 'snapshots/test/remote/assets');
+  git('commit', '-m', 'Export on the working branch');
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
-  assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
+  for (let attempt = 0; attempt < 50 && !(await evaluate('document.querySelector("main").innerText.includes("Результат импорта")')); attempt++) await wait(100);
+  const result = await evaluate('document.querySelector("main").innerText');
+  assert.match(result, /Результат импорта/);
+  assert.match(result, /Проверены UUID и связи 5 объектов/);
+  assert.match(result, /test\/remote/);
+  assert.equal(superset.calls.imports, 1);
+  const backup = await evaluate('document.querySelector(".panel p.hint:last-child .mono").textContent');
+  assert((await readFile(backup)).length > 0);
+  if (process.env.MGIT_TEST_SCREENSHOT) {
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
 });

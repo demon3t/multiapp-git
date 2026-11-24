@@ -1,6 +1,6 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
+import type { Bridge, Change, Entry, ExportResult, GitState, ImportResult, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
 import { BranchList } from './branch-list';
@@ -29,7 +29,6 @@ function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
 
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
 const emptyGit: GitState = { branch: '', status: '', head: '', localBranches: [], remoteBranches: [], tags: [] };
-const defaultFolder = 'snapshots/superset/assets';
 type MenuCommand = {
   label: string; shortcut: string; code: string; ctrl?: boolean; shift?: boolean;
   disabled?: boolean; run: () => void;
@@ -43,7 +42,7 @@ function CommandButton({ command }: { command: MenuCommand }) {
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
 }
-function Exclusions({ items }: { items: Plan['excluded'] }) {
+function Exclusions({ items }: { items: ImportResult['excluded'] }) {
   if (!items.length) return null;
   return <details className="notice"><summary>Исключено объектов: {items.length}</summary>
     <div className="asset-list">{items.map(issue => <p key={issue.path}>{issue.path} · {issue.message}</p>)}</div>
@@ -77,25 +76,13 @@ function App() {
   const [git, setGit] = useState(emptyGit);
   const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
   const [newBranch, setNewBranch] = useState('');
-  const [folderInput, setFolderInput] = useState<string>();
-  const [snapshotFolders, setSnapshotFolders] = useState<{ repo: string; ref: string; head: string; paths: string[] }>();
-  const [ref, setRef] = useState('HEAD');
   const [historyRef, setHistoryRef] = useState<string>();
   const [busy, setBusy] = useState('');
   const [message, setMessage] = useState('');
   const [error, setError] = useState<{ message: string; details?: unknown }>();
-  const [assets, setAssets] = useState<AssetSummary[]>([]);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [partial, setPartial] = useState(false);
-  const [preview, setPreview] = useState<Preview>();
-  const [written, setWritten] = useState(false);
+  const [exportResult, setExportResult] = useState<ExportResult>();
+  const [importResult, setImportResult] = useState<ImportResult>();
   const [commitMessage, setCommitMessage] = useState('');
-  const [plan, setPlan] = useState<Plan>();
-  const [only, setOnly] = useState(false);
-  const [compatibleOnly, setCompatibleOnly] = useState(false);
-  const [backup, setBackup] = useState(true);
-  const [confirm, setConfirm] = useState('');
-  const [validation, setValidation] = useState<Requests['validate'][1]>();
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
   const [updateMenu, setUpdateMenu] = useState(false);
@@ -104,10 +91,6 @@ function App() {
   const [appMenu, setAppMenu] = useState(false);
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
-  const folderRef = page === 'Импорт' ? ref : 'HEAD';
-  const paths = snapshotFolders?.repo === repo && snapshotFolders.ref === folderRef && snapshotFolders.head === git.head ? snapshotFolders.paths : [];
-  const folder = folderInput ?? (paths.length === 1 ? paths[0] : defaultFolder);
-  const context = { repo, folder, profileId };
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
 
   async function run<K extends keyof Requests>(
@@ -164,21 +147,13 @@ function App() {
     });
     return () => { active = false; };
   }, [profile?.id, profile?.repo]);
-  useEffect(() => {
-    if (!repo || !git.head || !folderRef.trim()) return;
-    let active = true;
-    void window.mgit.call('snapshotFolders', { repo, ref: folderRef }).then(result => {
-      if (active) setSnapshotFolders({ repo, ref: folderRef, head: git.head, paths: result.ok ? result.data : [] });
-    }).catch(() => undefined);
-    return () => { active = false; };
-  }, [repo, git, folderRef]);
-  function invalidate() { setPreview(undefined); setWritten(false); setPlan(undefined); setValidation(undefined); setConfirm(''); }
+  function invalidate() { setExportResult(undefined); setImportResult(undefined); setCommitMessage(''); }
   function chooseProfile(id: string) {
     setHistoryRef(undefined);
     if (id !== profileId) {
-      setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD'); setFolderInput(undefined);
+      setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined);
     }
-    setProfileId(id); setAssets([]); setSelected([]); setCompatibleOnly(false); invalidate();
+    setProfileId(id); invalidate();
   }
   function navigate(next: Page) {
     setPage(next); setError(undefined); setMessage('');
@@ -193,18 +168,17 @@ function App() {
     void run('save', editor, 'Сохранение профиля', value => {
       const saved = value.at(-1)!;
       if (saved.id === profileId && saved.repo !== profile?.repo) {
-        setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined); setRef('HEAD'); setFolderInput(undefined);
+        setRepo(''); setRepoInput(''); setGit(emptyGit); setGitDiff(undefined);
       }
       setProfiles(value); chooseProfile(saved.id); setEditor({ ...emptyProfile });
       navigate('Приложения'); setMessage('Приложение сохранено.');
     });
   }
   function setOpened(result: { repo: string; state: GitState }) {
-    if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); setHistoryRef(undefined); }
+    if (repo !== result.repo) setHistoryRef(undefined);
     const linkedProfile = profiles.find(item => item.repo === result.repo);
     if (linkedProfile && !profiles.some(item => item.id === profileId && item.repo === result.repo)) {
       setProfileId(linkedProfile.id);
-      setAssets([]); setSelected([]); setCompatibleOnly(false);
     }
     setOpenedRepos(paths => paths.includes(result.repo) ? paths : [...paths, result.repo]);
     setCloning(false);
@@ -229,12 +203,37 @@ function App() {
   function updateGit(result: GitState) { setGit(result); setGitDiff(undefined); invalidate(); }
   function showGitHistory(value?: string) {
     setHistoryRef(value);
-    if (value) { setRef(value); invalidate(); }
     navigate('История Git');
   }
-  function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
-    if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
-    else setError({ message: 'На цели есть расхождения.', details: result.issues });
+  function checkoutRef(ref: string) {
+    const remote = ref.startsWith('refs/remotes/');
+    const branch = ref.slice(remote ? 'refs/remotes/'.length : 'refs/heads/'.length);
+    if (!remote && git.branch === branch) return;
+    void run('branch', { repo, branch, create: false, remote }, 'Переключение ветки', result => {
+      updateGit(result);
+      showGitHistory('refs/heads/' + result.branch);
+      setMessage('Рабочая ветка: ' + result.branch);
+    });
+  }
+  function exportSuperset() {
+    navigate('Экспорт');
+    invalidate();
+    void run('exportSnapshot', { repo, profileId }, 'Экспорт и запись снимка', result => {
+      setGit(result.state);
+      setGitDiff(undefined);
+      setExportResult(result);
+      setMessage(result.changes.length ? 'Снимок записан в рабочее дерево.' : 'Снимок совпадает с текущим коммитом.');
+    });
+  }
+  function importSuperset() {
+    navigate('Импорт');
+    invalidate();
+    void run('importSnapshot', { repo, profileId }, 'Импорт и проверка Superset', result => {
+      setGit(result.state);
+      setGitDiff(undefined);
+      setImportResult(result);
+      setMessage(result.excluded.length ? 'Частичный снимок импортирован и проверен.' : 'Снимок импортирован и проверен.');
+    });
   }
 
   function checkForUpdates() {
@@ -289,14 +288,12 @@ function App() {
     return () => window.removeEventListener('keydown', handleShortcut);
   });
 
+  const operationResult = page === 'Экспорт' ? exportResult : importResult;
   const contextPanel = <div className="context">
-    <label>Superset<div className="readout" title={profile?.url}>{profile?.url || 'Выберите приложение'}</div></label>
-    <label>Репозиторий<div className="readout" title={repo}>{repo || 'Откройте репозиторий'}</div></label>
-    <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
-      {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
-    <label>Каталог снимка<input value={folder} list="snapshot-folders" onChange={e => { setFolderInput(e.target.value); invalidate(); }}/></label>
-    <datalist id="refs">{[...new Set([...git.localBranches, ...git.remoteBranches, ...git.tags])].map(name => <option key={name} value={name}/>)}</datalist>
-    <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
+    <label>Superset<div className="readout" title={profile?.url}>{profile?.url || '—'}</div></label>
+    <label>Репозиторий<div className="readout" title={repo}>{repo || '—'}</div></label>
+    <label>Рабочая ветка<div className="readout">{operationResult?.branch ?? (git.branch || '—')}</div></label>
+    {operationResult && <label>Каталог снимка<div className="readout" title={operationResult.folder}>{operationResult.folder}</div></label>}
   </div>;
 
   return <div className="shell">
@@ -383,8 +380,8 @@ function App() {
           onClick={() => run('push', repo, 'Git push', result => { setGit(result); setMessage('Push выполнен.'); })}><OperationIcon name="push"/><span>PUSH</span></button>
       </div>
       {profile?.type === 'superset' && applicationReady && <div className="operation-group superset-operations" aria-label="Superset операции">
-        <button className="operation" title="Export" aria-label="Export" disabled={!!busy} onClick={() => navigate('Экспорт')}><OperationIcon name="export"/><span>EXPORT</span></button>
-        <button className="operation" title="Import" aria-label="Import" disabled={!!busy} onClick={() => navigate('Импорт')}><OperationIcon name="import"/><span>IMPORT</span></button>
+        <button className="operation" title="Экспортировать в рабочую ветку" aria-label="Export" disabled={!!busy || !git.branch} onClick={exportSuperset}><OperationIcon name="export"/><span>EXPORT</span></button>
+        <button className="operation" title="Импортировать текущий коммит рабочей ветки" aria-label="Import" disabled={!!busy || !git.branch || !git.head} onClick={importSuperset}><OperationIcon name="import"/><span>IMPORT</span></button>
       </div>}
       {repo && <div className="branches" key={repo}>
         <div className="repo-views">
@@ -394,11 +391,12 @@ function App() {
             onClick={() => showGitHistory()}>Все коммиты</button>
         </div>
         <BranchList label="Локальные ветки" names={git.localBranches} prefix="refs/heads/"
-          expanded active={page === 'История Git' && historyRef ? historyRef : 'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}/>
+          expanded active={'refs/heads/' + git.branch} selected={page === 'История Git' ? historyRef : undefined}
+          disabled={!!busy} onSelect={showGitHistory} onCheckout={checkoutRef}/>
         <BranchList label="Удалённые ветки" names={git.remoteBranches} prefix="refs/remotes/"
-          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>
+          selected={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory} onCheckout={checkoutRef}/>
         {git.tags.length > 0 && <BranchList label="Теги" names={git.tags} prefix="refs/tags/"
-          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
+          selected={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
     <main className={page === 'История Git' ? 'history-page' : undefined}>
@@ -474,52 +472,29 @@ function App() {
             <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
         </section>}
       </>}
-      {page === 'Экспорт' && <>{contextPanel}<section className="panel">
-        <h2>Состав снимка</h2>
-        <label className="check"><input type="checkbox" checked={partial} onChange={e => { setPartial(e.target.checked); invalidate(); }}/>Выбор объектов с зависимостями</label>
-        {partial && <><div className="actions"><button disabled={!profile} onClick={() => run('inventory', profileId, 'Получение объектов Superset', value => { setAssets(value); setSelected([]); invalidate(); })}>Загрузить список объектов</button></div>
-          <div className="asset-list">{assets.map(asset => <label className="check" key={asset.uuid}><input type="checkbox" checked={selected.includes(asset.uuid)} onChange={e => {
-            setSelected(e.target.checked ? [...selected, asset.uuid] : selected.filter(id => id !== asset.uuid)); invalidate();
-          }}/>{asset.name} <span className="hint">{labels[asset.kind]}</span></label>)}</div></>}
-        <div className="actions"><button className="primary" disabled={!applicationReady || !git.branch || (partial && !selected.length)}
-          onClick={() => { invalidate(); void run('exportPreview', { ...context, selected: partial ? selected : [] }, 'Экспорт и проверка YAML', setPreview); }}>Подготовить экспорт</button></div>
-      </section>
-      {preview && <section className="panel"><h2>Изменения снимка</h2><Counts values={preview.counts}/>
-        <p className="hint">Файлов с изменениями: {preview.changes.length}.</p>
-        {preview.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {preview.issues.length}</summary>
-          <div className="asset-list">{preview.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
-        </details>}
-        <Changes key={preview.id} changes={preview.changes}/>
-        <div className="actions"><button className="primary" disabled={written || !preview.changes.length}
-          onClick={() => run('write', preview.id, 'Запись снимка', state => { setGit(state); setWritten(true); setMessage('Снимок записан.'); })}>Записать снимок</button></div>
-        {written && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage} onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
-          <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: preview.id, message: commitMessage }, 'Создание коммита', result => {
-            updateGit(result); setRef(result.head); setCommitMessage(''); setMessage('Коммит создан: ' + result.head);
-          })}>Создать коммит</button></div>}
-      </section>}</>}
-      {page === 'Импорт' && <>{contextPanel}<section className="panel"><h2>Предварительная проверка</h2>
-        <label className="check"><input type="checkbox" checked={only} onChange={e => { setOnly(e.target.checked); invalidate(); }}/>Только метаданные · локальная проверка</label>
-        <label className="check"><input type="checkbox" checked={compatibleOnly} onChange={e => { setCompatibleOnly(e.target.checked); invalidate(); }}/>Частичный снимок · исключить объекты с ошибками и зависящие от них объекты</label>
-        <div className="actions"><button disabled={!repo || !ref.trim()} className={only ? 'primary' : ''}
-          onClick={() => run('validate', { repo, ref, folder, compatibleOnly }, 'Локальная проверка', result => { setValidation(result); setMessage(result.excluded.length ? 'Совместимая часть прошла локальную проверку.' : 'Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
-          {!only && <><button className="primary" disabled={!applicationReady || !ref.trim()} onClick={() => {
-            setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref, compatibleOnly }, 'Подготовка плана импорта', setPlan);
-          }}>Построить план</button><button disabled={!applicationReady || !ref.trim()} onClick={() => run('verify', { ...context, ref, compatibleOnly }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
-        </div>
-        {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/><Exclusions items={validation.excluded}/></>}
-      </section>
-      {plan && !only && <section className="panel"><h2>План импорта</h2>
-        <p className="hint">{plan.url} · Superset {plan.version}</p><p className="hint mono">{plan.sha}</p>
-        <Counts values={plan.counts}/>
-        <Exclusions items={plan.excluded}/>
-        <div className="asset-list">{plan.assets.map(asset => <div className="plan-row" key={asset.uuid}><span>{asset.name}</span><span className={'tag ' + asset.action}>{actionNames[asset.action ?? '']}</span><span className="hint">{labels[asset.kind]}</span></div>)}</div>
-        <p className="hint">При применении Superset может обращаться к аналитическим подключениям целевого окружения.</p>
-        <label className="check"><input type="checkbox" checked={backup} onChange={e => setBackup(e.target.checked)}/>Сохранить резервный экспорт метаданных</label>
-        {profile && <label>Введите название приложения и полный SHA через пробел<input placeholder={profile.name + ' ' + plan.sha} value={confirm} onChange={e => setConfirm(e.target.value)}/></label>}
-        <div className="actions"><button className="primary"
-          disabled={!profile || confirm !== profile.name + ' ' + plan.sha}
-          onClick={() => run('apply', { id: plan.id, confirm, backup }, 'Импорт и проверка Superset', result => { setPlan(undefined); statusResult(result); })}>Применить коммит</button></div>
-      </section>}</>}
+      {page === 'Экспорт' && <>{contextPanel}
+        {exportResult && <section className="panel"><h2>Изменения снимка</h2><Counts values={exportResult.counts}/>
+          <p className="hint">Файлов с изменениями: {exportResult.changes.length}.</p>
+          {exportResult.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {exportResult.issues.length}</summary>
+            <div className="asset-list">{exportResult.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
+          </details>}
+          <Changes key={exportResult.id} changes={exportResult.changes}/>
+          {exportResult.changes.length > 0 && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage}
+            onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
+            <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: exportResult.id, message: commitMessage }, 'Создание коммита', result => {
+              updateGit(result); setMessage('Коммит создан: ' + result.head);
+            })}>Создать коммит</button></div>}
+        </section>}
+      </>}
+      {page === 'Импорт' && <>{contextPanel}
+        {importResult && <section className="panel"><h2>Результат импорта</h2>
+          <p className="hint mono">{importResult.sha}</p>
+          <Counts values={importResult.counts}/>
+          <Exclusions items={importResult.excluded}/>
+          <p>Проверены UUID и связи {importResult.checked} объектов.</p>
+          <p className="hint">Резервная копия · <span className="mono">{importResult.backupPath}</span></p>
+        </section>}
+      </>}
       {page === 'История операций' && <section className="panel">
         {history.length === 0 ? <p className="empty">Операций пока нет.</p> : <table><thead><tr><th>Время</th><th>Действие</th><th>Статус</th></tr></thead>
           <tbody>{history.map((entry, index) => <tr key={entry.time + index}><td>{new Date(entry.time).toLocaleString('ru-RU')}</td><td>{entry.action}</td>

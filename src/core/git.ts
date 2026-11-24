@@ -23,6 +23,8 @@ async function git(cwd: string, args: string[]) {
     let reason = 'Проверьте репозиторий, права и настройки Git.';
     if (e.code === 'ENOENT') reason = 'Установите Git и добавьте его в PATH.';
     else if (e.killed) reason = 'Истекло время ожидания или превышен лимит вывода. Проверьте состояние Git.';
+    else if (/would be overwritten|would lose your local changes/i.test(diagnostic)) reason = 'Сохраните локальные изменения, конфликтующие с выбранной веткой.';
+    else if (/already (used by worktree|checked out)/i.test(diagnostic)) reason = 'Эта ветка уже открыта в другом рабочем дереве.';
     else if (/author identity unknown|unable to auto-detect email/i.test(diagnostic)) reason = 'Настройте user.name и user.email в Git.';
     else if (/non-fast-forward|fetch first/i.test(diagnostic)) reason = 'Удалённая ветка изменилась. Выполните fetch и согласуйте историю.';
     else if (/authentication|permission denied|credential/i.test(diagnostic)) reason = 'Проверьте доступ и Git Credential Manager.';
@@ -96,7 +98,7 @@ async function optionalHead(repo: string) {
 }
 export async function gitStatus(repo: string) {
   const [branch, status, refs, head] = await Promise.all([
-    command(repo, ['symbolic-ref', '--quiet', '--short', 'HEAD']).catch(() => ''),
+    command(repo, ['symbolic-ref', '--quiet', 'HEAD']).then(ref => ref.replace(/^refs\/heads\//, '')).catch(() => ''),
     command(repo, ['status', '--porcelain=v1', '--untracked-files=all']),
     command(repo, ['for-each-ref', '--format=%(refname)%09%(symref)', 'refs/heads', 'refs/remotes', 'refs/tags']),
     optionalHead(repo)
@@ -182,8 +184,23 @@ async function assertClean(repo: string) {
   if (!status.branch) throw new Failure('Переключитесь на локальную ветку.');
   return status;
 }
-export async function changeBranch(repo: string, branch: string, create: boolean) {
-  await assertClean(repo);
+export async function changeBranch(repo: string, branch: string, create: boolean, remote = false) {
+  if (remote) {
+    const ref = 'refs/remotes/' + branch;
+    const { remoteBranches, localBranches } = await gitStatus(repo);
+    if (!remoteBranches.includes(branch)) throw new Failure('Удалённая ветка не найдена.', 'git');
+    const name = (await command(repo, ['remote'])).split(/\r?\n/)
+      .filter(name => branch.startsWith(name + '/')).sort((a, b) => b.length - a.length)[0];
+    if (!name) throw new Failure('Удалённый репозиторий ветки не настроен.', 'git');
+    const local = branch.slice(name.length + 1);
+    if (!localBranches.includes(local)) {
+      await git(repo, ['switch', '--track', '-c', local, ref]);
+      return gitStatus(repo);
+    }
+    const upstream = await command(repo, ['for-each-ref', '--format=%(upstream)', 'refs/heads/' + local]);
+    if (upstream !== ref) throw new Failure('Локальная ветка ' + local + ' уже существует. Выберите её в списке локальных веток.', 'git');
+    branch = local;
+  }
   if (branch.startsWith('-') || branch.startsWith('@{')) throw new Failure('Укажите имя локальной ветки.');
   await git(repo, ['check-ref-format', '--branch', branch]);
   await git(repo, create ? ['switch', '-c', branch] : ['switch', '--no-guess', '--', branch]);
