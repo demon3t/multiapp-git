@@ -239,7 +239,7 @@ function App() {
         <img src="./icon.png" width="16" height="16" alt=""/>
       </button>
       <div className="repo-menu">
-        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => { setAppMenu(false); setRepoMenu(!repoMenu); }}>Файл ▾</button>
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => { setAppMenu(false); setRepoMenu(!repoMenu); }}>Файл</button>
         {repoMenu && <div className="repo-menu-panel">
           <button onClick={() => openDirectory('init')}>Инициализировать репозиторий</button>
           <button onClick={() => openDirectory('open')}>Открыть репозиторий</button>
@@ -247,7 +247,7 @@ function App() {
         </div>}
       </div>
       <div className="app-menu">
-        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={appMenu} onClick={() => { setRepoMenu(false); setAppMenu(!appMenu); }}>Приложение ▾</button>
+        <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={appMenu} onClick={() => { setRepoMenu(false); setAppMenu(!appMenu); }}>Приложение</button>
         {appMenu && <div className="repo-menu-panel app-menu-panel">
           <button onClick={() => { setAppMenu(false); navigate('История операций'); }}>История операций</button>
           <div className="menu-separator" role="separator"/>
@@ -262,7 +262,7 @@ function App() {
         </button>}
         <button className="updates-toggle" aria-expanded={updateMenu}
           onClick={() => setUpdateMenu(!updateMenu)}>
-          Обновления ▾
+          Обновления
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
           <h2>mGit {update?.current}</h2>

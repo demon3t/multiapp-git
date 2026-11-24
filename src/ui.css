@@ -91,6 +91,8 @@ label{gap:4px;font-size:12px}.form-grid{gap:9px;margin-top:8px}.actions{gap:5px;
 .title-drag{flex:1;min-width:18px}
 .updates-menu{position:relative;flex:none}
 .updates-toggle{background:transparent;border-color:transparent}
+.tabbar button[aria-expanded]:hover:not(:disabled),
+.tabbar button[aria-expanded=true]{background:#d5e3f4;color:#124c8c;filter:none}
 .updates-panel{position:absolute;right:0;top:calc(100% + 6px);width:335px;z-index:3;padding:14px;background:#fff;border:1px solid #c5cbd4;border-radius:5px;box-shadow:0 6px 20px #24385526}
 .updates-panel p{margin-top:8px;overflow-wrap:anywhere}
 .updates-panel form{margin-top:12px}
