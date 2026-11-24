@@ -60,6 +60,9 @@ test('packaged mGit adds a Superset application with its Git repository', { time
       socket.send(JSON.stringify({ id, method: 'Runtime.evaluate', params: { expression, returnByValue: true, awaitPromise: true } }));
     });
   }
+  function shortcut(code, shiftKey = false) {
+    return evaluate(`window.dispatchEvent(new KeyboardEvent("keydown", ${JSON.stringify({ code, ctrlKey: true, shiftKey, cancelable: true })}))`);
+  }
   for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector("h1")?.textContent') !== 'Приложения'; attempt++) await wait(100);
   assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Приложения');
   const titleBar = await evaluate(`(() => {
@@ -88,19 +91,21 @@ test('packaged mGit adds a Superset application with its Git repository', { time
     'PULL', 'FETCH', 'PUSH'
   ]);
   await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Файл")).click()');
-  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".repo-menu-panel button"), x => x.textContent)'), [
-    'Инициализировать репозиторий', 'Открыть репозиторий', 'Клонировать репозиторий'
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".repo-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd").textContent])'), [
+    ['Инициализировать репозиторий', 'Ctrl+Shift+N'], ['Открыть репозиторий', 'Ctrl+O'], ['Клонировать репозиторий', 'Ctrl+Shift+O']
   ]);
-  await evaluate('document.querySelector(".repo-menu-panel button:last-child").click()');
+  assert.equal(await shortcut('KeyO', true), false);
   assert.equal(await evaluate('document.querySelector("main .panel h2")?.textContent'), 'Клонировать репозиторий');
+  assert.equal(await evaluate('!!document.querySelector(".repo-menu-panel")'), false);
   await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Приложение")).click()');
-  assert.deepEqual(await evaluate('Array.from(document.querySelector(".app-menu-panel").children).map(x => x.textContent)'), ['История операций', '', 'Настройки']);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".app-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd").textContent])'),
+    [['История операций', 'Ctrl+H'], ['Настройки', 'Ctrl+,']]);
   assert.equal(await evaluate('document.querySelector(".app-menu-panel [role=separator]")?.className'), 'menu-separator');
   await evaluate('document.querySelector(".app-menu-panel button:first-child").click()');
   assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'История операций');
   for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".app-menu button").disabled'); attempt++) await wait(100);
   await evaluate('document.querySelector(".app-menu button").click()');
-  await evaluate('document.querySelector(".app-menu-panel button:last-child").click()');
+  assert.equal(await shortcut('Comma'), false);
   assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Настройки');
   await evaluate('document.querySelector(".brand").click()');
   const initialized = await evaluate('window.mgit.call("init", ' + JSON.stringify(join(profile, 'initialized')) + ')');

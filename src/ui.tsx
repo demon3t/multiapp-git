@@ -29,6 +29,16 @@ function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
 const emptyGit: GitState = { branch: '', status: '', head: '', localBranches: [], remoteBranches: [], tags: [] };
 const defaultFolder = 'snapshots/superset/assets';
+type MenuCommand = {
+  label: string; shortcut: string; code: string; ctrl?: boolean; shift?: boolean;
+  disabled?: boolean; run: () => void;
+};
+function CommandButton({ command }: { command: MenuCommand }) {
+  return <button type="button" className="menu-command" disabled={command.disabled}
+    aria-keyshortcuts={command.shortcut.replace('Ctrl', 'Control')} onClick={command.run}>
+    <span>{command.label}</span><kbd aria-hidden="true">{command.shortcut}</kbd>
+  </button>;
+}
 function Counts({ values }: { values: Record<string, number> }) {
   return <div className="counts">{Object.entries(values).map(([kind, count]) => <div key={kind}><strong>{count}</strong><span>{labels[kind]}</span></div>)}</div>;
 }
@@ -223,6 +233,42 @@ function App() {
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
   }
 
+  const commands = {
+    init: { label: 'Инициализировать репозиторий', shortcut: 'Ctrl+Shift+N', code: 'KeyN', ctrl: true, shift: true,
+      run: () => openDirectory('init') },
+    open: { label: 'Открыть репозиторий', shortcut: 'Ctrl+O', code: 'KeyO', ctrl: true,
+      run: () => openDirectory('open') },
+    clone: { label: 'Клонировать репозиторий', shortcut: 'Ctrl+Shift+O', code: 'KeyO', ctrl: true, shift: true,
+      run: () => { setRepoMenu(false); setRepoInput(''); setRemote(''); setCloning(true); navigate('Репозитории'); } },
+    history: { label: 'История операций', shortcut: 'Ctrl+H', code: 'KeyH', ctrl: true,
+      run: () => { setAppMenu(false); navigate('История операций'); } },
+    settings: { label: 'Настройки', shortcut: 'Ctrl+,', code: 'Comma', ctrl: true,
+      run: () => { setAppMenu(false); editApplication(profile); } },
+    checkUpdate: { label: 'Проверить сейчас', shortcut: 'Ctrl+Shift+U', code: 'KeyU', ctrl: true, shift: true,
+      disabled: update?.status === 'checking',
+      run: () => { setUpdateMenu(true); void run('checkUpdate', undefined, 'Проверка обновлений', setUpdate); } },
+    updateNotes: { label: 'Что нового', shortcut: 'Shift+F1', code: 'F1', shift: true, disabled: !updateAvailable,
+      run: () => { setUpdateMenu(false); setUpdateDialog(true); } },
+    releases: { label: 'Релизы на GitHub', shortcut: 'F1', code: 'F1',
+      run: () => { void run('openReleases', undefined, 'Открытие GitHub'); } }
+  } satisfies Record<string, MenuCommand>;
+
+  useEffect(() => {
+    function handleShortcut(event: KeyboardEvent) {
+      if (event.defaultPrevented || event.isComposing || event.altKey || event.metaKey) return;
+      const command = (Object.values(commands) as MenuCommand[]).find(item =>
+        item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
+      if (!command) return;
+      event.preventDefault();
+      if (event.repeat || busy || updateDialog || command.disabled) return;
+      setRepoMenu(false);
+      setAppMenu(false);
+      command.run();
+    }
+    window.addEventListener('keydown', handleShortcut);
+    return () => window.removeEventListener('keydown', handleShortcut);
+  });
+
   const contextPanel = <div className="context">
     <label>Superset<div className="readout" title={profile?.url}>{profile?.url || 'Выберите приложение'}</div></label>
     <label>Репозиторий<div className="readout" title={repo}>{repo || 'Откройте репозиторий'}</div></label>
@@ -241,17 +287,17 @@ function App() {
       <div className="repo-menu">
         <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={repoMenu} onClick={() => { setAppMenu(false); setRepoMenu(!repoMenu); }}>Файл</button>
         {repoMenu && <div className="repo-menu-panel">
-          <button onClick={() => openDirectory('init')}>Инициализировать репозиторий</button>
-          <button onClick={() => openDirectory('open')}>Открыть репозиторий</button>
-          <button onClick={() => { setRepoMenu(false); setRepoInput(''); setRemote(''); setCloning(true); navigate('Репозитории'); }}>Клонировать репозиторий</button>
+          <CommandButton command={commands.init}/>
+          <CommandButton command={commands.open}/>
+          <CommandButton command={commands.clone}/>
         </div>}
       </div>
       <div className="app-menu">
         <button className="repo-menu-trigger" disabled={!!busy} aria-expanded={appMenu} onClick={() => { setRepoMenu(false); setAppMenu(!appMenu); }}>Приложение</button>
         {appMenu && <div className="repo-menu-panel app-menu-panel">
-          <button onClick={() => { setAppMenu(false); navigate('История операций'); }}>История операций</button>
+          <CommandButton command={commands.history}/>
           <div className="menu-separator" role="separator"/>
-          <button onClick={() => { setAppMenu(false); editApplication(profile); }}>Настройки</button>
+          <CommandButton command={commands.settings}/>
         </div>}
       </div>
       <div className="title-drag"/>
@@ -273,10 +319,10 @@ function App() {
             ready: 'Обновление ' + update?.latest + ' готово к установке.', installing: 'Запускаем установщик…',
             'no-release': 'В репозитории пока нет опубликованных релизов.', error: 'Проверка не завершилась.'
           }[update?.status ?? 'idle'])}</p>
-          <div className="actions">
-            <button disabled={!!busy || update?.status === 'checking'} onClick={() => run('checkUpdate', undefined, 'Проверка обновлений', setUpdate)}>Проверить сейчас</button>
-            {updateAvailable && <button onClick={() => { setUpdateMenu(false); setUpdateDialog(true); }}>Что нового</button>}
-            <button onClick={() => run('openReleases', undefined, 'Открытие GitHub')}>Релизы на GitHub</button>
+          <div className="update-commands">
+            <CommandButton command={{ ...commands.checkUpdate, disabled: !!busy || commands.checkUpdate.disabled }}/>
+            {updateAvailable && <CommandButton command={commands.updateNotes}/>}
+            <CommandButton command={{ ...commands.releases, disabled: !!busy }}/>
           </div>
           <label className="check"><input type="checkbox" checked={update?.automatic === true} disabled={!!busy} onChange={e =>
             run('saveUpdateSettings', { automatic: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Проверять автоматически</label>
