@@ -31,6 +31,8 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 .app-tabs{align-self:stretch;display:flex;align-items:end;min-width:0;overflow:auto;gap:2px}
 .app-tabs button{display:flex;align-items:center;gap:6px;flex:0 0 auto;max-width:260px;overflow:hidden;text-overflow:ellipsis;border-radius:4px 4px 0 0;background:#edf0f5;border-color:#c9cfd9;border-bottom:0}
 .app-tabs button[aria-pressed=true]{background:#fafbfc;color:#15549e;border-top:2px solid #3e86d4}
+.repository-icon{flex:none}
+.app-tabs button>span,.tab-appearance-preview>span{overflow:hidden;text-overflow:ellipsis}
 .toolbar .new-tab{border:0;background:transparent;font-size:15px;padding:0 5px}
 .repo-menu,.app-menu{position:relative;flex:none}
 .repo-menu-trigger{background:transparent;border:0;color:#354253;font-weight:600;padding:3px 6px}
@@ -113,6 +115,13 @@ label{gap:4px;font-size:12px}.form-grid{gap:9px;margin-top:8px}.actions{gap:5px;
 .update-changes li+li{margin-top:4px}
 .update-dialog progress{width:100%;margin:10px 0}
 .update-dialog-actions{display:flex;justify-content:flex-end;gap:7px;margin-top:12px}
+.tab-appearance-dialog fieldset{display:grid;gap:10px;margin-top:12px}
+.tab-icon-options,.tab-color-options,.tab-appearance-preview{display:flex;align-items:center;gap:5px}
+.tab-icon-options button{display:grid;place-items:center;min-width:29px}
+.tab-icon-options button[aria-pressed=true]{background:#e0eafa;color:#19599e;border-color:#afc8e5}
+.tab-color-options label{display:flex;align-items:center}
+.tab-color-options input{width:34px;height:26px;padding:2px}
+.tab-appearance-preview{width:fit-content;max-width:100%;padding:4px 8px;background:#edf0f5;border:1px solid #c9cfd9;border-radius:4px;white-space:nowrap}
 .repo-views{padding-bottom:4px;margin-bottom:4px;border-bottom:1px solid #d4dae3}
 .repo-views button{display:block;width:100%;text-align:left;background:transparent;border:0}
 .repo-views button:hover,.repo-views button[aria-pressed=true]{background:#e0eafa;color:#19599e}

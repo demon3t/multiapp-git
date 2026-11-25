@@ -6,6 +6,7 @@ import { UpdateDialog } from './update-dialog';
 import { BranchList } from './branch-list';
 import { GitHistory } from './git-history';
 import { WorkingTree } from './working-tree';
+import { RepositoryIcon, TabAppearanceDialog } from './tab-appearance';
 
 declare global { interface Window { mgit: Bridge } }
 const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История Git', 'История операций', 'Настройки'] as const;
@@ -13,7 +14,6 @@ type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
 const repositoryName = (path: string) => path.split(/[\\/]/).at(-1);
-const icons = ['M3 5h18v5H3z M3 14h18v5H3z M7 7.5h1 M7 16.5h1', 'M5 3h13v17H5z M5 16h13 M8 7h7 M8 10h5', 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6', 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6', 'M3 12a9 9 0 1 0 3-7 M3 4v5h5 M12 7v5l3 2', 'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2'];
 const operationIcons = {
   pull: 'M5 5h14 M5 5l4-4 M5 5l4 4 M19 19H5 M19 19l-4-4 M19 19l-4 4',
   fetch: 'M12 3v14 M7 13l5 5 5-5 M4 20h16',
@@ -21,9 +21,6 @@ const operationIcons = {
   export: 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6',
   import: 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6'
 } as const;
-function Icon({ index }: { index: number }) {
-  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
-}
 function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
   return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={operationIcons[name]}/></svg>;
 }
@@ -102,6 +99,7 @@ function App() {
   const [updateDialog, setUpdateDialog] = useState(false);
   const [repoMenu, setRepoMenu] = useState(false);
   const [appMenu, setAppMenu] = useState(false);
+  const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -280,7 +278,7 @@ function App() {
         item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
       if (!command) return;
       event.preventDefault();
-      if (event.repeat || busy || updateDialog || command.disabled) return;
+      if (event.repeat || busy || updateDialog || appearanceTab || command.disabled) return;
       setRepoMenu(false);
       setAppMenu(false);
       command.run();
@@ -362,11 +360,18 @@ function App() {
       </div>
     </div>
     {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
+    {appearanceTab && <TabAppearanceDialog tab={appearanceTab} onClose={() => setAppearanceTab(undefined)} save={async input => {
+      const result = await window.mgit.call('saveTabAppearance', input);
+      if (!result.ok) throw new Error(result.message);
+      setProfiles(result.data);
+      setAppearanceTab(undefined);
+    }}/>}
     <div className="toolbar">
       <div className="app-tabs" aria-label="Подключённые репозитории">
         {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId && applicationReady}
           disabled={!!busy} onClick={() => { setCloning(false); selectApplication(item); navigate(item.type === 'git' ? 'Репозитории' : item.repo ? 'История Git' : 'Приложения'); }}
-          title={item.repo || item.url}><Icon index={item.type === 'git' ? 1 : 0}/>{item.name}</button>)}
+          onContextMenu={event => { event.preventDefault(); if (!busy) setAppearanceTab(item); }}
+          title={(item.repo || item.url) + '\nПравый щелчок — оформление вкладки'}><RepositoryIcon {...item}/><span>{item.name}</span></button>)}
       </div>
       <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
     </div>
@@ -417,6 +422,7 @@ function App() {
                 'Superset ' + (data.version || '· версия не определена') + '. Admin: ' + (data.admin === null ? 'роль не определена' : data.admin ? 'да' : 'нет') +
                 '. API экспорта: ' + (data.export ? 'да' : 'нет') + '. API импорта: ' + (data.import ? 'да' : 'нет') + '.'
               ))}>Проверить</button>}
+              <button onClick={() => setAppearanceTab(item)}>Оформление вкладки</button>
               <button onClick={() => editApplication(item)}>Изменить</button>
             </div>)}</div>}
         </section>

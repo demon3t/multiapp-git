@@ -4,15 +4,15 @@ import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import { basename, join } from 'node:path';
 import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model';
-import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
+import { Bridge, Context, Entry, ProfileInput, Requests, TabAppearance, tabIcons } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
 import { prepareSnapshot, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 import { checkRelease, downloadInstaller, releaseChanges, releasesPage, UpdateStatus } from './core/updates';
 
-type StoredSuperset = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
-type StoredGit = { profile: Pick<Profile, 'id' | 'name'>; type: 'git'; repo: string };
+type StoredSuperset = { profile: Profile & TabAppearance; encrypted: string; type?: 'superset'; repo?: string };
+type StoredGit = { profile: { id: string } & TabAppearance; type: 'git'; repo: string };
 type Stored = StoredGit | StoredSuperset;
 type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean } };
 let state: State;
@@ -113,12 +113,12 @@ function unlock(value: StoredSuperset): Secret {
 }
 function listProfiles() {
   return state.profiles.map(item => {
-    const { id, name } = item.profile;
-    if (item.type === 'git') return { id, name, url: '', auth: 'db' as const, type: item.type, repo: item.repo, mappingIds: [] };
+    const { id, name, icon, color } = item.profile;
+    if (item.type === 'git') return { id, name, icon, color, url: '', auth: 'db' as const, type: item.type, repo: item.repo, mappingIds: [] };
     const { url, auth, username, ca } = item.profile;
     let mappingIds: string[] = [];
     try { mappingIds = Object.keys(unlock(item).connections); } catch { /* Opening Git does not require Superset credentials. */ }
-    return { id, name, url, auth, username, ca, type: item.type ?? 'superset', repo: item.repo ?? '', mappingIds };
+    return { id, name, icon, color, url, auth, username, ca, type: item.type ?? 'superset', repo: item.repo ?? '', mappingIds };
   });
 }
 function profileFor(id: string) {
@@ -138,7 +138,8 @@ async function save(input: ProfileInput) {
     if (!input.repo?.trim()) throw new Failure('Укажите папку Git.');
     const repo = await git.openRepoRoot(input.repo.trim());
     const entry = existing ?? state.profiles.find(item => item.type === 'git' && item.repo === repo);
-    const profile = { id: entry?.profile.id ?? randomUUID(), name: input.name?.trim() || basename(repo) };
+    const profile = { id: entry?.profile.id ?? randomUUID(), name: input.name?.trim() || basename(repo),
+      icon: entry?.profile.icon, color: entry?.profile.color };
     await persist({ ...state, profiles: [...state.profiles.filter(item => item !== entry), { profile, type: 'git', repo }] });
     preparedImport = undefined;
     preparedExport = undefined;
@@ -152,7 +153,8 @@ async function save(input: ProfileInput) {
   if (input.ca && (!input.ca.includes('-----BEGIN CERTIFICATE-----') || /PRIVATE KEY/.test(input.ca))) throw new Failure('Корпоративный CA должен быть сертификатом PEM.');
   const url = profileUrl(input.url);
   const repo = await git.openRepoRoot(input.repo.trim());
-  const profile: Profile = { id: existing?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
+  const profile: StoredSuperset['profile'] = { id: existing?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
+    icon: existing?.profile.icon, color: existing?.profile.color,
     auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
   let secret: Secret = { credential: '', connections: {} };
   const sameTarget = old?.profile.url === profile.url;
@@ -192,6 +194,20 @@ async function openWorkspace(repo: string) {
 }
 const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][1] | Promise<Requests[K][1]> } = {
   profiles: listProfiles, save, probe: id => profileFor(id).adapter.probe(),
+  async saveTabAppearance(input) {
+    const item = state.profiles.find(item => item.profile.id === input.id);
+    const name = input.name?.trim();
+    if (!item || !name || name.length > 80 || /[\r\n\0]/.test(name) ||
+      (input.icon !== undefined && !tabIcons.includes(input.icon)) ||
+      (input.color !== undefined && !/^#[0-9a-f]{6}$/i.test(input.color))) {
+      throw new Failure('Проверьте название, значок и цвет вкладки.');
+    }
+    const updated = structuredClone(item);
+    Object.assign(updated.profile, { name, icon: input.icon, color: input.color });
+    const profiles = state.profiles.map(profile => profile === item ? updated : profile);
+    await persist({ ...state, profiles });
+    return listProfiles();
+  },
   async pickDirectory() { return (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0] ?? ''; },
   async open(path) { return openWorkspace(await git.openRepoRoot(path)); },
   async init(path) { return openWorkspace(await git.initRepo(path)); },

@@ -13,7 +13,10 @@ export type WorkingFile = { path: string; previousPath?: string; index: string; 
 export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
 export type GitCommitFile = { status: string; path: string; previousPath?: string };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
-export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
+export const tabIcons = ['repository', 'server', 'folder', 'branch', 'code', 'star'] as const;
+export type TabIcon = typeof tabIcons[number];
+export type TabAppearance = { name: string; icon?: TabIcon; color?: string };
+export type ProfileSummary = ProfileInput & TabAppearance & { id: string; mappingIds: string[] };
 export type OpenedRepo = { repo: string; state: GitState; profiles: ProfileSummary[] };
 export type Context = { repo: string; folder: string; profileId: string };
 export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
@@ -24,6 +27,7 @@ export type Verification = { verified: boolean; checked: number; issues: unknown
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
   save: [ProfileInput, ProfileSummary[]];
+  saveTabAppearance: [TabAppearance & { id: string }, ProfileSummary[]];
   probe: [string, { version: string; apiVersion: string; admin: boolean | null; export: boolean; import: boolean }];
   pickDirectory: [undefined, string];
   open: [string, OpenedRepo];
