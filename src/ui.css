@@ -287,9 +287,9 @@ button.danger,.danger{background:#c44d68;color:#fff}
 .commit-files button[aria-pressed=true],
 .diff-files .active{font-weight:700}
 
-.branch-menu{position:fixed;right:auto;z-index:20;width:min(304px,calc(100vw - 8px));min-width:0;max-height:calc(100vh - 8px);overflow:auto;padding:3px;background:#292929;border-color:#545454;border-radius:7px;box-shadow:0 8px 23px #0005}
-.branch-menu .menu-command{min-height:23px;padding:3px 7px;gap:12px;border-radius:4px;color:#f5f5f5;font-weight:400}
-.branch-menu .menu-command:hover:not(:disabled),.branch-menu .menu-command:focus-visible{background:#414141;color:#fff;outline:none}
-.branch-menu .menu-command kbd{min-width:54px;color:#bcbcbc}
-.branch-menu .menu-separator{margin:2px -3px;background:#484848}
+.branch-menu{position:fixed;right:auto;z-index:20;width:min(304px,calc(100vw - 8px));min-width:0;max-height:calc(100vh - 8px);overflow:auto;padding:3px;border-radius:7px}
+.branch-menu .menu-command{min-height:23px;padding:3px 7px;gap:12px;border-radius:4px;font-weight:400}
+.branch-menu .menu-command:focus-visible{background:#dce9f6;color:#1e5889;outline-offset:-2px}
+.branch-menu .menu-command kbd{min-width:54px}
+.branch-menu .menu-separator{margin:2px -3px}
 .branch-dialog form{margin-top:12px}
