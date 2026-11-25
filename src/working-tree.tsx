@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import type { WorkingFile } from './core/public';
+import { RepositoryIcon } from './tab-appearance';
 
 type Props = {
   files: WorkingFile[];
@@ -35,7 +36,9 @@ function FileNodes({ folder, selected, onSelect }: {
   folder: Folder; selected?: string; onSelect: (file: WorkingFile) => void;
 }) {
   return <ul>{[...folder.folders].map(([name, child]) => <li key={'folder:' + name}>
-    <details open><summary>{name}</summary><FileNodes folder={child} selected={selected} onSelect={onSelect}/></details>
+    <details open><summary><RepositoryIcon icon="folder"/>{name}</summary>
+      <FileNodes folder={child} selected={selected} onSelect={onSelect}/>
+    </details>
   </li>)}
   {folder.files.map(file => <li key={file.path}>
     <button className="working-file-name" type="button" title={file.previousPath ? file.previousPath + ' → ' + file.path : file.path}

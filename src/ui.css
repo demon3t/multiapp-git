@@ -32,6 +32,7 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 .app-tabs button{display:flex;align-items:center;gap:6px;flex:0 0 auto;max-width:260px;overflow:hidden;text-overflow:ellipsis;border-radius:4px 4px 0 0;background:#edf0f5;border-color:#c9cfd9;border-bottom:0}
 .app-tabs button[aria-pressed=true]{background:#fafbfc;color:#15549e;border-top:2px solid #3e86d4}
 .repository-icon{flex:none}
+.branches summary .repository-icon,.working-file-tree summary .repository-icon{vertical-align:-3px;margin-right:5px;color:#536b83}
 .app-tabs button>span,.tab-appearance-preview>span{overflow:hidden;text-overflow:ellipsis}
 .toolbar .new-tab{border:0;background:transparent;font-size:15px;padding:0 5px}
 .repo-menu,.app-menu{position:relative;flex:none}

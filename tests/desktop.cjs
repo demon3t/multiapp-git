@@ -302,6 +302,10 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.deepEqual(await evaluate('Array.from(' + row + '[2].querySelectorAll("code"), cell => cell.textContent)'), ['', 'Extra line']);
   assert.deepEqual(await evaluate('Array.from(' + row + '[3].querySelectorAll(".working-line-number"), cell => cell.textContent)'), ['2', '3']);
   await capture(process.env.MGIT_TEST_GIT_SPLIT_SCREENSHOT);
+  const treeIcons = await evaluate(`Array.from(document.querySelectorAll(
+    '.working-file-tree summary, .branches .branch-ref[title="refs/heads/main"]'
+  ), row => [row.firstElementChild?.dataset.icon, row.textContent])`);
+  assert.deepEqual(treeIcons, [['branch', 'main'], ['folder', 'docs'], ['folder', 'drafts']]);
   const selectFile = fileButton + '.click()';
   const stage = 'document.querySelector(".working-diff-header button[data-stage]")';
   const waitForStage = async type => {

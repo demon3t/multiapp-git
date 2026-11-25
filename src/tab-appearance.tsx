@@ -10,9 +10,9 @@ const icons: Record<TabIcon, { label: string; path: string }> = {
   star: { label: 'Звезда', path: 'M12 3l2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z' }
 };
 
-export function RepositoryIcon({ icon, color, type }: Pick<ProfileSummary, 'icon' | 'color' | 'type'>) {
+export function RepositoryIcon({ icon, color, type }: Pick<ProfileSummary, 'icon' | 'color'> & { type?: ProfileSummary['type'] }) {
   const key = icon && Object.hasOwn(icons, icon) ? icon : type === 'git' ? 'repository' : 'server';
-  return <svg className="repository-icon" aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"
+  return <svg className="repository-icon" data-icon={key} aria-hidden="true" width="14" height="14" viewBox="0 0 24 24"
     fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
     style={color ? { color } : undefined}><path d={icons[key].path}/></svg>;
 }

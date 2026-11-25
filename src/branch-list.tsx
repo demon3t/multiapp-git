@@ -1,4 +1,5 @@
 import React from 'react';
+import { RepositoryIcon } from './tab-appearance';
 
 type RefNode = { ref?: string; children: Map<string, RefNode> };
 type RefActions = { active?: string; disabled: boolean; onSelect: (ref: string) => void;
@@ -20,10 +21,11 @@ function BranchNodes({ nodes, ...actions }: RefActions & { nodes: Map<string, Re
           actions.onMenu(ref, event.currentTarget);
         }}
         onDoubleClick={() => actions.onSwitch?.(ref)}>
-        <span className="branch-dot" aria-hidden="true"/><span>{name}</span>
+        {ref.startsWith('refs/tags/') ? <span className="branch-dot" aria-hidden="true"/> : <RepositoryIcon icon="branch"/>}
+        <span>{name}</span>
       </button>}
       {node.children.size > 0 && <details open>
-        <summary>{name}</summary>
+        <summary><RepositoryIcon icon="folder"/>{name}</summary>
         <BranchNodes nodes={node.children} {...actions}/>
       </details>}
     </li>;
