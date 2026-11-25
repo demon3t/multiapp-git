@@ -1,12 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import type { GitCommit, GitState, Requests } from './core/public';
 import { GraphCell, layoutGraph } from './commit-graph';
+import type { CommitMenuTarget } from './commit-menu';
 
 const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
 const refName = (ref: string) => ref.replace(/^(?:HEAD -> |tag: )?refs\/(?:heads|remotes|tags)\//, '');
 const formatDate = (date: string) => date ? dateFormat.format(new Date(date)) : '—';
 
-export function GitHistory({ repo, ref, revision }: { repo: string; ref?: string; revision: GitState }) {
+export function GitHistory({ repo, ref, revision, onMenu }: {
+  repo: string; ref?: string; revision: GitState; onMenu: (target: CommitMenuTarget) => void;
+}) {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [selected, setSelected] = useState('');
   const [more, setMore] = useState(false);
@@ -46,7 +49,17 @@ export function GitHistory({ repo, ref, revision }: { repo: string; ref?: string
         <span style={{ width: graph.width }}>Граф</span><span>Сообщение</span><span>Автор</span><span>SHA</span><span>Дата</span>
       </div>
       {commits.map((item, index) => <button type="button" className="commit-row commit-grid" aria-pressed={item.sha === commit?.sha}
-        key={item.sha} style={{ minWidth: graph.width + 470 }} onClick={() => setSelected(item.sha)}>
+        key={item.sha} style={{ minWidth: graph.width + 470 }} aria-haspopup="menu" onClick={() => setSelected(item.sha)}
+        onContextMenu={event => {
+          event.preventDefault();
+          setSelected(item.sha);
+          onMenu({ commit: item, anchor: event.currentTarget, point: { x: event.clientX, y: event.clientY } });
+        }}
+        onKeyDown={event => {
+          if (event.key !== 'ContextMenu' && !(event.shiftKey && event.key === 'F10')) return;
+          event.preventDefault(); event.stopPropagation(); setSelected(item.sha);
+          onMenu({ commit: item, anchor: event.currentTarget });
+        }}>
         <GraphCell row={graph.rows[index]} width={graph.width}/>
         <span className="commit-subject" title={item.subject}>
           {item.refs.map(name => <span key={name} title={name} className={'commit-ref' +
@@ -54,7 +67,9 @@ export function GitHistory({ repo, ref, revision }: { repo: string; ref?: string
           <span className="commit-title">{item.subject || 'Без сообщения'}</span>
         </span>
         <span className="commit-author" title={item.author}>{item.author}</span>
-        <span className="mono" title={item.sha}>{item.sha.slice(0, 8)}</span>
+        <span className="mono commit-sha-button" role="button" tabIndex={0} title="Скопировать полный SHA" aria-label={'Скопировать SHA ' + item.sha}
+          onClick={event => { event.stopPropagation(); void window.mgit.call('copyCommit', { repo, sha: item.sha, full: false }); }}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void window.mgit.call('copyCommit', { repo, sha: item.sha, full: false }); } }}>{item.sha.slice(0, 8)}</span>
         <span className="commit-date">{formatDate(item.date)}</span>
       </button>)}
       {error && <p className="history-feedback" role="alert">{error}</p>}

@@ -93,7 +93,8 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert(titleBar.reserved > 0);
   for (let attempt = 0; attempt < 30 && !(await evaluate('!!document.querySelector("#update-permission")')); attempt++) await wait(100);
   assert.match(await evaluate('document.querySelector("#update-permission")?.textContent'), /автоматически/);
-  await evaluate('Array.from(document.querySelectorAll(".updates-panel button")).find(button => button.textContent === "Нет, спасибо").click()');
+  assert.equal(await evaluate('!!document.querySelector(".operation-toasts #update-permission")'), true);
+  await evaluate('Array.from(document.querySelectorAll(".operation-toasts button")).find(button => button.textContent === "Нет, спасибо").click()');
   for (let attempt = 0; attempt < 30 && await evaluate('!!document.querySelector("#update-permission")'); attempt++) await wait(100);
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.automatic, false);
   assert.equal(await evaluate('!!document.querySelector("#update-permission")'), false);
@@ -106,15 +107,31 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Проверить обновления');
   if (process.env.MGIT_TEST_UPDATE_SCREENSHOT) {
     await evaluate('document.querySelector(".update-icon-button").click()');
-    const notes = 'document.querySelectorAll(".update-dialog[open] li").length';
-    for (let attempt = 0; attempt < 160 && !(await evaluate(notes)); attempt++) await wait(100);
-    assert(await evaluate(notes), 'The update icon should open the dialog with release notes');
-    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".update-dialog-actions button"), button => button.textContent)'), ['Отмена', 'Обновить']);
+    const action = 'document.querySelector(".update-toast-action")';
+    for (let attempt = 0; attempt < 160 && !(await evaluate('!!' + action)); attempt++) await wait(100);
+    assert.equal(await evaluate(action + '?.textContent'), 'Открыть обновление');
+    assert.equal(await evaluate('!!document.querySelector(".update-dialog[open]")'), false);
+    assert.equal(await evaluate(`(() => {
+      const close = document.querySelector('.update-toast button[aria-label="Закрыть уведомление"]');
+      close.focus();
+      return getComputedStyle(close).outlineStyle;
+    })()`), 'none');
     const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
     await writeFile(process.env.MGIT_TEST_UPDATE_SCREENSHOT, Buffer.from(data, 'base64'));
+    await evaluate(action + '.click()');
+    const notes = 'document.querySelectorAll(".update-dialog[open] li").length';
+    for (let attempt = 0; attempt < 160 && !(await evaluate(notes)); attempt++) await wait(100);
+    assert(await evaluate(notes), 'The notification action should open the dialog with release notes');
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".update-dialog-actions button"), button => button.textContent)'), ['Отмена', 'Обновить']);
+    assert.match(await evaluate('document.querySelector(".update-dialog .operation-toasts .update-toast [role=status]")?.textContent'), /Доступна версия mGit/);
     await evaluate('document.querySelector(".update-dialog-actions button").click()');
     assert.equal(await evaluate('!!document.querySelector(".update-dialog[open]")'), false);
     assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'available');
+    await evaluate('document.querySelector(".update-toast-action").click()');
+    assert.equal(await evaluate('!!document.querySelector(".update-dialog[open]")'), true);
+    await evaluate('document.querySelector(".update-dialog-actions button").click()');
+    await evaluate('document.querySelector(".update-toast button[aria-label]").click()');
+    assert.equal(await evaluate('!!document.querySelector(".update-toast")'), false);
   }
   assert.deepEqual(await evaluate('window.mgit.call("profiles")'), { ok: true, data: [] });
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), [
@@ -199,6 +216,10 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll("button"), item => item.textContent)'),
     ['compact', 'main']);
   await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-menu button"), item => item.getAttribute("aria-label"))'),
+    ['Переключить ветку', 'Показать историю', 'Слить в main…', 'Rebase main на выбранную…',
+      'Создать ветку от этой', 'Создать тег…', 'Копировать имя ветки']);
+  await evaluate('document.querySelector(\'.branch-menu button[aria-label="Показать историю"]\').click()');
   const rowCount = 'document.querySelectorAll(".commit-row").length';
   for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 2; attempt++) await wait(100);
   assert.equal(await evaluate(rowCount), 2);
@@ -212,8 +233,77 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert(await evaluate('(() => { const lines = document.querySelectorAll(".commit-patch pre span"); return lines[1].offsetTop > lines[0].offsetTop; })()'));
   await evaluate('document.querySelector(".commit-tabs button:first-child").click()');
   assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
+  await evaluate('document.querySelector(".commit-row").dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, cancelable: true, clientX: 420, clientY: 180}))');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-menu button"), item => item.getAttribute("aria-label"))'),
+    ['main  ›', 'origin/main  ›', 'origin/HEAD  ›', 'Создать ветку…', 'Создать тег…', 'Rebase «main» на этот коммит…', 'Сбросить «main» до коммита…',
+      'Переключиться на коммит…', 'Cherry-pick коммита…', 'Отменить коммит (Revert)…', 'Сохранить как патч…',
+      'Сравнить с рабочей папкой', 'Копировать SHA коммита', 'Копировать сведения о коммите']);
+  if (process.env.MGIT_TEST_COMMIT_MENU_SCREENSHOT) {
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_COMMIT_MENU_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  await evaluate('document.querySelector(".branch-menu").dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))');
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
   assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
+
+  const branch = name => 'document.querySelector(' + JSON.stringify('.branch-ref[title="refs/heads/' + name + '"]') + ')';
+  const menuItem = label => 'Array.from(document.querySelectorAll(".branch-menu button")).find(button => button.getAttribute("aria-label") === ' + JSON.stringify(label) + ')';
+  const waitForBranch = async name => {
+    for (let attempt = 0; attempt < 30 && !(await evaluate(branch(name) + '?.getAttribute("aria-current") === "true" && !' + branch(name) + '?.disabled')); attempt++) await wait(100);
+    assert.equal(await evaluate(branch(name) + '?.getAttribute("aria-current")'), 'true');
+    assert.equal(git('branch', '--show-current').toString().trim(), name);
+  };
+  const submitBranchName = name => evaluate(`(() => {
+    const field = document.querySelector('.branch-dialog input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(name)});
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.form.requestSubmit();
+  })()`);
+  await evaluate(branch('main') + '.dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, cancelable: true}))');
+  assert.equal(await evaluate(menuItem('Удалить…') + '.disabled'), true);
+  await evaluate(menuItem('Создать ветку от этой') + '.click()');
+  await submitBranchName('test/context');
+  await waitForBranch('test/context');
+  await evaluate(branch('test/context') + '.click()');
+  await evaluate(menuItem('Переименовать…') + '.click()');
+  await submitBranchName('test/renamed');
+  await waitForBranch('test/renamed');
+  await evaluate(branch('test/renamed') + '.click()');
+  await evaluate(menuItem('Создать тег…') + '.click()');
+  await submitBranchName('test-context-tag');
+  for (let attempt = 0; attempt < 30 && !(await evaluate('document.querySelector(\'.branch-ref[title="refs/tags/test-context-tag"]\')')); attempt++) await wait(100);
+  assert.equal(git('rev-parse', 'test-context-tag').toString().trim(), git('rev-parse', 'test/renamed').toString().trim());
+  await evaluate(branch('feature/ui/compact') + '.dispatchEvent(new MouseEvent("dblclick", {bubbles: true}))');
+  await waitForBranch('feature/ui/compact');
+  assert.doesNotMatch(await readFile(join(repo, 'README.md'), 'utf8'), /Local snapshots/);
+  await evaluate(branch('main') + '.click()');
+  await evaluate(menuItem('Переключить ветку') + '.click()');
+  await waitForBranch('main');
+  await evaluate(branch('test/renamed') + '.click()');
+  if (process.env.MGIT_TEST_BRANCH_SCREENSHOT) {
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_BRANCH_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  const notice = 'document.querySelector(".operation-toasts .success [role=status]")?.textContent';
+  for (const [label, expected] of [['Слить в main…', 'Слияние выполнено.'], ['Rebase main на выбранную…', 'Rebase выполнен.']]) {
+    await evaluate(menuItem(label) + '.click()');
+    assert.equal(await evaluate('!!document.querySelector(".branch-dialog[open]")'), true);
+    await evaluate('document.querySelector(".branch-dialog form").requestSubmit()');
+    for (let attempt = 0; attempt < 30 && await evaluate(notice) !== expected; attempt++) await wait(100);
+    assert.equal(await evaluate(notice), expected);
+    if (label.startsWith('Rebase') && process.env.MGIT_TEST_TOAST_SCREENSHOT) {
+      const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+      await writeFile(process.env.MGIT_TEST_TOAST_SCREENSHOT, Buffer.from(data, 'base64'));
+    }
+    await evaluate('document.querySelector(".operation-toasts .success button").click()');
+    assert.equal(await evaluate(notice), undefined);
+    if (label.startsWith('Слить')) await evaluate(branch('test/renamed') + '.click()');
+  }
+  await evaluate(branch('test/renamed') + '.click()');
+  await evaluate(menuItem('Удалить…') + '.click()');
+  await evaluate('document.querySelector(".branch-dialog button.danger").click()');
+  for (let attempt = 0; attempt < 30 && await evaluate('!!' + branch('test/renamed')); attempt++) await wait(100);
+  assert.equal(await evaluate('!!' + branch('test/renamed')), false);
 
   const localRepo = initialized.data.repo;
   const localGit = (...args) => execFileSync('git', args, { cwd: localRepo, encoding: 'utf8' });
@@ -256,6 +346,10 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.deepEqual(await evaluate('Array.from(' + row + '[2].querySelectorAll("code"), cell => cell.textContent)'), ['', 'Extra line']);
   assert.deepEqual(await evaluate('Array.from(' + row + '[3].querySelectorAll(".working-line-number"), cell => cell.textContent)'), ['2', '3']);
   await capture(process.env.MGIT_TEST_GIT_SPLIT_SCREENSHOT);
+  const treeIcons = await evaluate(`Array.from(document.querySelectorAll(
+    '.working-file-tree summary, .branches .branch-ref[title="refs/heads/main"]'
+  ), row => [row.firstElementChild?.dataset.icon, row.textContent])`);
+  assert.deepEqual(treeIcons, [['branch', 'main'], ['folder', 'docs'], ['folder', 'drafts']]);
   const selectFile = fileButton + '.click()';
   const stage = 'document.querySelector(".working-diff-header button[data-stage]")';
   const waitForStage = async type => {
@@ -280,10 +374,16 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     const field = document.querySelector('.working-files input');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, 'Add project notes');
     field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.form.requestSubmit();
+    const description = field.form.querySelector('textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(description, 'Describe the changes.\\nAdd extra context.');
+    description.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
+  await capture(process.env.MGIT_TEST_COMMIT_DESCRIPTION_SCREENSHOT);
+  await evaluate('document.querySelector(".commit-actions").requestSubmit()');
   for (let attempt = 0; attempt < 30 && await evaluate(index) !== 0; attempt++) await wait(100);
   assert.equal(localGit('log', '-1', '--format=%s').trim(), 'Add project notes');
+  assert.equal(localGit('log', '-1', '--format=%b').trim(), 'Describe the changes.\nAdd extra context.');
+  assert.equal(await evaluate('document.querySelector(".commit-actions textarea").value'), '');
   assert.equal(localGit('ls-files').trim(), 'README.md');
   assert.equal(await readFile(join(localRepo, 'docs', 'drafts', 'notes [draft].txt'), 'utf8'), 'Keep this local\n');
   const plain = JSON.parse(await readFile(join(profile, 'mgit.json'), 'utf8')).profiles.find(item => item.type === 'git');

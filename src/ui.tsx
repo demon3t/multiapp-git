@@ -1,9 +1,13 @@
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AssetSummary, Bridge, Change, Entry, GitState, OpenedRepo, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
+import { UpdateNotification } from './update-notification';
 import { BranchList } from './branch-list';
+import { BranchDialog, BranchMenu, type BranchCommand, type BranchMenuTarget, type EditAction } from './branch-menu';
+import type { BranchAction, CommitAction, CommitCommand, GitCommit } from './core/public';
+import { CommitActionDialog, CommitMenu, commitLabels, type CommitEdit, type CommitMenuTarget } from './commit-menu';
 import { GitHistory } from './git-history';
 import { WorkingTree } from './working-tree';
 import { RepositoryIcon, TabAppearanceDialog } from './tab-appearance';
@@ -94,11 +98,19 @@ function App() {
   const [validation, setValidation] = useState<Requests['validate'][1]>();
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
+  const [dismissedUpdate, setDismissedUpdate] = useState('');
+  const [updateError, setUpdateError] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
   const [repoMenu, setRepoMenu] = useState(false);
   const [appMenu, setAppMenu] = useState(false);
   const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
+  const [branchMenu, setBranchMenu] = useState<BranchMenuTarget>();
+  const [branchDialog, setBranchDialog] = useState<{ ref: string; action: EditAction; current: string; head: string }>();
+  const [commitMenu, setCommitMenu] = useState<CommitMenuTarget>();
+  const [commitAction, setCommitAction] = useState<{ commit: GitCommit; action: CommitEdit; state: GitState }>();
+  const [commitComparison, setCommitComparison] = useState<{ sha: string; patch: string }>();
+  const comparisonDialog = useRef<HTMLDialogElement>(null);
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -106,6 +118,25 @@ function App() {
   const folder = folderInput ?? (paths.length === 1 ? paths[0] : defaultFolder);
   const context = { repo, folder, profileId };
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
+  useEffect(() => { if (commitComparison) comparisonDialog.current?.showModal(); }, [commitComparison]);
+
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(() => setMessage(''), 6000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
+  const updateNoticeKey = update ? JSON.stringify([update.status, update.latest, update.message, updateError]) : '';
+  const showUpdateDialog = updateDialog && updateAvailable;
+  const updateNotification = update && (update.status !== 'idle' || updateError) && updateNoticeKey !== dismissedUpdate &&
+    <UpdateNotification update={updateError ? { ...update, status: 'error', message: updateError } : update}
+      dismiss={() => setDismissedUpdate(updateNoticeKey)} showDetails={showUpdateDialog ? undefined : () => setUpdateDialog(true)}/>;
+
+  useEffect(() => {
+    if (update?.status !== 'current' && update?.status !== 'no-release') return;
+    const timer = window.setTimeout(() => setDismissedUpdate(updateNoticeKey), 6000);
+    return () => window.clearTimeout(timer);
+  }, [update?.status, updateNoticeKey]);
 
   async function run<K extends keyof Requests>(
     method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void | Promise<void>
@@ -122,7 +153,13 @@ function App() {
   useEffect(() => { void run('profiles', undefined, 'Загрузка профилей', data => { setProfiles(data); setProfileId(data[0]?.id ?? ''); }); }, []);
   useEffect(() => {
     let active = true;
-    const unsubscribe = window.mgit.onUpdate(setUpdate);
+    const unsubscribe = window.mgit.onUpdate(status => {
+      if (status.status === 'checking' || status.status === 'downloading') {
+        setDismissedUpdate('');
+        setUpdateError('');
+      }
+      setUpdate(status);
+    });
     void window.mgit.call('updateStatus', undefined).then(result => {
       if (active && result.ok) setUpdate(result.data);
     }).catch(() => undefined);
@@ -229,6 +266,56 @@ function App() {
     if (value) { setRef(value); invalidate(); }
     navigate('История Git');
   }
+  function openBranchMenu(ref: string, anchor: HTMLButtonElement) {
+    setBranchMenu({ ref, anchor });
+  }
+  function changeSelectedBranch(action: BranchAction) {
+    setBranchMenu(undefined);
+    setBranchDialog(undefined);
+    if (busy) return;
+    void run('branchAction', { repo, ...action }, 'Операция с веткой', result => {
+      updateGit(result);
+      if (action.action === 'switch' || action.action === 'create') {
+        showGitHistory('refs/heads/' + result.branch);
+        setMessage('Текущая ветка: ' + result.branch);
+      } else if (action.action === 'tag') {
+        setMessage('Тег создан.');
+      } else if (action.action === 'merge' || action.action === 'rebase') {
+        showGitHistory('refs/heads/' + result.branch);
+        setMessage(action.action === 'merge' ? 'Слияние выполнено.' : 'Rebase выполнен.');
+      } else {
+        if (historyRef === action.ref) showGitHistory(action.action === 'rename' ? 'refs/heads/' + action.name : undefined);
+        setMessage(action.action === 'rename' ? 'Ветка переименована.' : 'Ветка удалена.');
+      }
+    });
+  }
+  function chooseBranchCommand(command: BranchCommand) {
+    if (!branchMenu) return;
+    const { ref } = branchMenu;
+    setBranchMenu(undefined);
+    if (command === 'history') showGitHistory(ref);
+    else if (command === 'switch') changeSelectedBranch({ ref, action: 'switch' });
+    else if (command === 'copy') void run('copyBranchName', { repo, ref }, 'Копирование имени ветки');
+    else setBranchDialog({ ref, action: command, current: git.branch, head: git.head });
+  }
+  function chooseCommitCommand(command: CommitCommand) {
+    if (!commitMenu) return;
+    const { commit } = commitMenu;
+    setCommitMenu(undefined);
+    const input = { repo, sha: commit.sha };
+    if (command === 'compare') void run('compareCommit', input, 'Сравнение с рабочей папкой', patch => setCommitComparison({ sha: commit.sha, patch }));
+    else if (command === 'patch') void run('saveCommitPatch', input, 'Сохранение патча', saved => { if (saved) setMessage('Патч сохранён.'); });
+    else if (command === 'copy-sha' || command === 'copy-info') void run('copyCommit', { ...input, full: command === 'copy-info' },
+      'Копирование коммита', () => setMessage(command === 'copy-info' ? 'Сведения о коммите скопированы.' : 'SHA коммита скопирован.'));
+    else setCommitAction({ commit, action: command, state: git });
+  }
+  function applyCommitAction(input: CommitAction) {
+    setCommitAction(undefined);
+    void run('commitAction', { repo, ...input }, commitLabels[input.action].replace(/…$/, ''), result => {
+      updateGit(result);
+      setMessage('Операция с коммитом выполнена.');
+    });
+  }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
@@ -236,17 +323,17 @@ function App() {
 
   function checkForUpdates() {
     setUpdateMenu(false);
-    void run('checkUpdate', undefined, 'Проверка обновлений', result => {
-      setUpdate(result);
-      if (result.latest && ['available', 'downloading', 'ready'].includes(result.status)) {
-        setUpdateDialog(true);
-      } else if (result.status === 'current') {
-        setMessage('У вас актуальная версия mGit.');
-      } else if (result.status === 'no-release') {
-        setMessage('В репозитории пока нет опубликованных релизов.');
-      } else if (result.status === 'error') {
-        setError({ message: result.message ?? 'Не удалось проверить обновления.' });
+    setDismissedUpdate('');
+    setUpdateError('');
+    setUpdate(previous => previous && { ...previous, status: 'checking', message: undefined });
+    void window.mgit.call('checkUpdate', undefined).then(result => {
+      if (!result.ok) {
+        setUpdate(previous => previous && { ...previous, status: 'error', message: result.message });
+        return;
       }
+      setUpdate(result.data);
+    }).catch(() => {
+      setUpdate(previous => previous && { ...previous, status: 'error', message: 'Не удалось проверить обновления.' });
     });
   }
 
@@ -277,7 +364,7 @@ function App() {
         item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
       if (!command) return;
       event.preventDefault();
-      if (event.repeat || busy || updateDialog || appearanceTab || command.disabled) return;
+      if (event.repeat || busy || updateDialog || appearanceTab || branchDialog || branchMenu || commitMenu || commitAction || commitComparison || command.disabled) return;
       setRepoMenu(false);
       setAppMenu(false);
       command.run();
@@ -297,6 +384,29 @@ function App() {
   </div>;
 
   const fileWorkspace = page === 'Репозитории' && !cloning && Boolean(repo) && profile?.type === 'git';
+  const askUpdatePermission = update?.askPermission && !updateMenu && !showUpdateDialog && !updateNotification;
+  const notifications = (busy || error || message || updateNotification || askUpdatePermission) && <div className="operation-toasts">
+    {busy && <div role="status" className="notice progress"><progress aria-label={busy}/>{busy}…</div>}
+    {error && <div className="error operation-toast-result">
+      <div role="alert"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>
+      <button className="toast-close" type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setError(undefined)}/>
+    </div>}
+    {message && <div className="notice success operation-toast-result">
+      <div role="status">{message}</div>
+      <button className="toast-close" type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setMessage('')}/>
+    </div>}
+    {updateNotification}
+    {askUpdatePermission && <section className="notice operation-toast-result" aria-labelledby="update-permission">
+      <div>
+        <h2 id="update-permission">Проверять обновления автоматически?</h2>
+        <p>mGit сможет проверять новые версии ежедневно, пока приложение открыто.</p>
+        <div className="actions">
+          <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', setUpdate)}>Разрешить</button>
+          <button disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: false }, 'Сохранение настроек', setUpdate)}>Нет, спасибо</button>
+        </div>
+      </div>
+    </section>}
+  </div>;
 
   return <div className="shell">
     <div className="tabbar">
@@ -323,20 +433,13 @@ function App() {
       <div className="title-drag"/>
       <div className="updates-menu">
         <button className={'updates-toggle update-icon-button' + (updateAvailable ? ' update-available' : '')}
-          aria-label="Проверить обновления" title="Проверить обновления (Ctrl+Shift+U)" aria-haspopup="dialog"
+          aria-label="Проверить обновления" title="Проверить обновления (Ctrl+Shift+U)"
           disabled={!!busy || update?.status === 'checking' || update?.status === 'installing'}
           onClick={checkForUpdates}>
           <span className="update-icon" aria-hidden="true">↻</span>
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
           <h2>mGit {update?.current}</h2>
-          <p role="status">{update?.message ?? ({
-            idle: 'Проверьте наличие новой версии на GitHub.', checking: 'Проверяем GitHub…',
-            current: 'У вас актуальная версия.', available: 'Доступна версия ' + update?.latest + '.',
-            downloading: 'Загрузка установщика · ' + (update?.progress ?? 0) + '%',
-            ready: 'Обновление ' + update?.latest + ' готово к установке.', installing: 'Запускаем установщик…',
-            'no-release': 'В репозитории пока нет опубликованных релизов.', error: 'Проверка не завершилась.'
-          }[update?.status ?? 'idle'])}</p>
           <div className="update-commands">
             <CommandButton command={{ ...commands.checkUpdate, disabled: !!busy || commands.checkUpdate.disabled }}/>
             {updateAvailable && <CommandButton command={commands.updateNotes}/>}
@@ -348,17 +451,10 @@ function App() {
             disabled={!!busy || update?.automatic !== true} onChange={e =>
               run('saveUpdateSettings', { automatic: true, autoInstall: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Скачивать и устанавливать при выходе</label>
         </section>}
-        {update?.askPermission && !updateMenu && <section className="updates-panel" aria-labelledby="update-permission">
-          <h2 id="update-permission">Проверять обновления автоматически?</h2>
-          <p>mGit сможет проверять новые версии ежедневно, пока приложение открыто.</p>
-          <div className="actions">
-            <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', setUpdate)}>Разрешить</button>
-            <button disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: false }, 'Сохранение настроек', setUpdate)}>Нет, спасибо</button>
-          </div>
-        </section>}
       </div>
     </div>
-    {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
+    {showUpdateDialog && update && <UpdateDialog key={update.latest} update={update} busy={!!busy}
+      notification={notifications} onError={message => { setDismissedUpdate(''); setUpdateError(message); }} onClose={() => setUpdateDialog(false)}/>}
     {appearanceTab && <TabAppearanceDialog tab={appearanceTab} onClose={() => setAppearanceTab(undefined)} save={async input => {
       const result = await window.mgit.call('saveTabAppearance', input);
       if (!result.ok) throw new Error(result.message);
@@ -396,20 +492,36 @@ function App() {
             onClick={() => showGitHistory()}>Все коммиты</button>
         </div>
         <BranchList label="Локальные ветки" names={git.localBranches} prefix="refs/heads/"
-          expanded active={page === 'История Git' && historyRef ? historyRef : 'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}/>
+          expanded active={'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}
+          onMenu={openBranchMenu} onSwitch={ref => changeSelectedBranch({ ref, action: 'switch' })}/>
         <BranchList label="Удалённые ветки" names={git.remoteBranches} prefix="refs/remotes/"
-          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>
+          disabled={!!busy} onSelect={showGitHistory} onMenu={openBranchMenu}
+          onSwitch={ref => changeSelectedBranch({ ref, action: 'switch' })}/>
         {git.tags.length > 0 && <BranchList label="Теги" names={git.tags} prefix="refs/tags/"
           active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
+    {branchMenu && <BranchMenu target={branchMenu} current={git.branch} head={git.head} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
+    {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action} current={branchDialog.current} head={branchDialog.head}
+      onClose={() => setBranchDialog(undefined)} onSubmit={changeSelectedBranch}/>}
+    {commitMenu && <CommitMenu target={commitMenu} state={git} onClose={() => setCommitMenu(undefined)} onCommand={chooseCommitCommand}
+      onBranch={ref => { setBranchMenu({ ref, anchor: commitMenu.anchor }); setCommitMenu(undefined); }}/>}
+    {commitAction && <CommitActionDialog {...commitAction} onClose={() => setCommitAction(undefined)} onSubmit={applyCommitAction}/>}
+    {commitComparison && <dialog ref={comparisonDialog} className="update-dialog commit-comparison-dialog" aria-labelledby="commit-comparison-title"
+      onCancel={event => { event.preventDefault(); setCommitComparison(undefined); }}>
+      <h2 id="commit-comparison-title">Рабочая папка и коммит {commitComparison.sha.slice(0, 8)}</h2>
+      <pre tabIndex={0}>{commitComparison.patch ? commitComparison.patch.slice(0, 250_000).split('\n').map((line, index) =>
+        <span key={index} className={line.startsWith('@@') ? 'patch-hunk' : line.startsWith('+') && !line.startsWith('+++ ') ? 'patch-added'
+          : line.startsWith('-') && !line.startsWith('--- ') ? 'patch-removed' : undefined}>{line || ' '}</span>) : 'Различий нет.'}
+        {commitComparison.patch.length > 250_000 && '… Показано начало diff.'}</pre>
+      <div className="update-dialog-actions"><button type="button" onClick={() => setCommitComparison(undefined)}>Закрыть</button></div>
+    </dialog>}
+    {!showUpdateDialog && notifications}
     <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
       {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
-      {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
-      {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
-      {message && <div role="status" className="notice success">{message}</div>}
       <fieldset disabled={Boolean(busy)}>
-      {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}/>
+      {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}
+        onMenu={target => { setBranchMenu(undefined); setCommitMenu(target); }}/>
         : <p className="empty">Откройте репозиторий, чтобы увидеть историю Git.</p>)}
       {page === 'Приложения' && <>
         <section className="panel">
@@ -474,7 +586,7 @@ function App() {
             stage={(path, staged, complete) => run('stageFile', { repo, path, staged }, staged ? 'Удаление из индекса' : 'Добавление в индекс', result => {
               updateGit(result); complete();
             })}
-            commit={(message, complete) => run('commitStaged', { repo, message }, 'Создание коммита', result => {
+            commit={(message, description, complete) => run('commitStaged', { repo, message, description }, 'Создание коммита', result => {
               updateGit(result); complete(); setMessage('Коммит создан.');
             })}/> : <>
           <h2>Рабочее дерево</h2>

@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import type { WorkingFile } from './core/public';
+import { RepositoryIcon } from './tab-appearance';
 
 type Props = {
   files: WorkingFile[];
   refresh: () => void;
   readPatch: (path: string, staged: boolean, complete: (patch: string) => void) => void;
   stage: (path: string, staged: boolean, complete: () => void) => void;
-  commit: (message: string, complete: () => void) => void;
+  commit: (message: string, description: string, complete: () => void) => void;
 };
 
 type Folder = { folders: Map<string, Folder>; files: WorkingFile[] };
@@ -35,7 +36,9 @@ function FileNodes({ folder, selected, onSelect }: {
   folder: Folder; selected?: string; onSelect: (file: WorkingFile) => void;
 }) {
   return <ul>{[...folder.folders].map(([name, child]) => <li key={'folder:' + name}>
-    <details open><summary>{name}</summary><FileNodes folder={child} selected={selected} onSelect={onSelect}/></details>
+    <details open><summary><RepositoryIcon icon="folder"/>{name}</summary>
+      <FileNodes folder={child} selected={selected} onSelect={onSelect}/>
+    </details>
   </li>)}
   {folder.files.map(file => <li key={file.path}>
     <button className="working-file-name" type="button" title={file.previousPath ? file.previousPath + ' → ' + file.path : file.path}
@@ -126,6 +129,7 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
   const [selection, setSelection] = useState<{ path: string; staged: boolean; patch: string }>();
   const [split, setSplit] = useState(false);
   const [message, setMessage] = useState('');
+  const [description, setDescription] = useState('');
   const selected = files.find(file => file.path === selection?.path);
   const readyToCommit = files.some(inIndex) && Boolean(message.trim());
   function select(file: WorkingFile, staged = !inWorktree(file)) {
@@ -182,10 +186,16 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
     </div>
     <form className="actions commit-actions" onSubmit={event => {
       event.preventDefault();
-      if (readyToCommit) commit(message, () => { setMessage(''); setSelection(undefined); });
+      if (readyToCommit) commit(message, description, () => {
+        setMessage('');
+        setDescription('');
+        setSelection(undefined);
+      });
     }}>
       <button className="primary" disabled={!readyToCommit}>Создать коммит</button>
       <input aria-label="Сообщение коммита" placeholder="Сообщение коммита" value={message} onChange={event => setMessage(event.target.value)}/>
+      <textarea aria-label="Описание коммита" placeholder="Описание коммита" rows={2} value={description}
+        onChange={event => setDescription(event.target.value)}/>
     </form>
   </div>;
 }

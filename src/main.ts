@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -213,12 +213,35 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   async init(path) { return openWorkspace(await git.initRepo(path)); },
   async clone(input) { return openWorkspace(await git.cloneRepo(input.url, input.path)); },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
+  branchAction: input => git.branchAction(input.repo, input),
+  async copyBranchName({ repo, ref }) {
+    const { localBranches, remoteBranches } = await git.gitStatus(repo);
+    const name = localBranches.find(name => ref === 'refs/heads/' + name)
+      ?? remoteBranches.find(name => ref === 'refs/remotes/' + name);
+    if (!name) throw new Failure('Ветка больше не доступна.', 'git');
+    clipboard.writeText(name);
+  },
   workingPatch: input => git.workingPatch(input.repo, input.path, input.staged),
   stageFile: input => git.stageFile(input.repo, input.path, input.staged),
-  commitStaged: input => git.commitStaged(input.repo, input.message),
+  commitStaged: input => git.commitStaged(input.repo, input.message, input.description),
   gitLog: input => git.gitLog(input.repo, input.ref, input.offset),
   commitFiles: input => git.commitFiles(input.repo, input.sha),
   commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),
+  commitAction: input => git.commitAction(input.repo, input),
+  compareCommit: input => git.compareCommit(input.repo, input.sha),
+  async saveCommitPatch({ repo, sha }) {
+    const patch = await git.saveCommitPatch(repo, sha);
+    if (!patch.length) throw new Failure('В коммите нет изменений для сохранения.');
+    const result = await dialog.showSaveDialog(window, {
+      defaultPath: sha.slice(0, 12) + '.patch', filters: [{ name: 'Git patch', extensions: ['patch'] }]
+    });
+    if (result.canceled || !result.filePath) return false;
+    await fs.writeFile(result.filePath, patch);
+    return true;
+  },
+  async copyCommit({ repo, sha, full }) {
+    clipboard.writeText(await git.copyCommitText(repo, sha, full));
+  },
   fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,
   async inventory(id) {
     return (await exportSnapshot(profileFor(id).adapter)).assets;
@@ -311,10 +334,11 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases', 'copyBranchName']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
+  commitAction: 'Операция с коммитом', saveCommitPatch: 'Сохранение патча',
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
-  branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
+  branch: 'Ветка выбрана', branchAction: 'Операция с веткой', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
   exportPreview: 'Предпросмотр экспорта готов', write: 'Каталог снимка проверен и записан', commit: 'Коммит создан',
   validate: 'Локальная проверка пройдена', plan: 'План импорта подготовлен', apply: 'Импорт применён и проверен', verify: 'Проверка цели выполнена',
   saveUpdateSettings: 'Настройки обновлений сохранены'

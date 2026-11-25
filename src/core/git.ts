@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
 import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
-import type { GitCommit, GitCommitFile, WorkingFile } from './public';
+import type { BranchAction, CommitAction, GitCommit, GitCommitFile, WorkingFile } from './public';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -25,6 +25,8 @@ async function git(cwd: string, args: string[], diffExit = false) {
     if (e.code === 'ENOENT') reason = 'Установите Git и добавьте его в PATH.';
     else if (e.killed) reason = 'Истекло время ожидания или превышен лимит вывода. Проверьте состояние Git.';
     else if (/author identity unknown|unable to auto-detect email/i.test(diagnostic)) reason = 'Настройте user.name и user.email в Git.';
+    else if (/not fully merged/i.test(diagnostic)) reason = 'Ветка содержит несохранённые в других ветках коммиты. Сначала выполните слияние.';
+    else if (/would be overwritten/i.test(diagnostic)) reason = 'Git остановил переключение, чтобы сохранить локальные изменения.';
     else if (/non-fast-forward|fetch first/i.test(diagnostic)) reason = 'Удалённая ветка изменилась. Выполните fetch и согласуйте историю.';
     else if (/authentication|permission denied|credential/i.test(diagnostic)) reason = 'Проверьте доступ и Git Credential Manager.';
     throw new Failure('Git ' + args[0] + ': ' + reason, 'git');
@@ -155,9 +157,10 @@ export async function stageFile(repo: string, path: string, staged: boolean) {
   return gitStatus(repo);
 }
 
-export async function commitStaged(repo: string, message: string) {
+export async function commitStaged(repo: string, message: string, description = '') {
   if (!message.trim() || message.length > 4000) throw new Failure('Введите сообщение коммита.');
-  await git(repo, ['commit', '-m', message.trim()]);
+  const body = description.trim();
+  await git(repo, ['commit', '-m', message.trim(), ...(body ? ['-m', body] : [])]);
   return gitStatus(repo);
 }
 export async function gitDiff(repo: string) {
@@ -222,6 +225,60 @@ export async function commitPatch(repo: string, sha: string, paths: string[]) {
   const { flags, revisions } = await commitDiffArgs(repo, sha);
   return (await git(repo, ['--literal-pathspecs', ...flags, '-p', ...revisions, '--', ...paths])).toString('utf8');
 }
+export async function saveCommitPatch(repo: string, sha: string) {
+  const { flags, revisions } = await commitDiffArgs(repo, sha);
+  return git(repo, [...flags, '-p', '--binary', '--full-index', ...revisions, '--']);
+}
+
+export async function compareCommit(repo: string, sha: string) {
+  const target = await resolveCommitSelection(repo, sha);
+  return command(repo, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', target, '--']);
+}
+
+async function resolveCommitSelection(repo: string, sha: string) {
+  if (!commitSha.test(sha)) throw new Failure('Укажите полный SHA коммита.');
+  return resolveCommit(repo, sha);
+}
+
+export async function copyCommitText(repo: string, sha: string, full: boolean) {
+  const target = await resolveCommitSelection(repo, sha);
+  return full ? command(repo, ['show', '-s', '--no-notes', '--no-show-signature', '--format=fuller', target, '--']) : target;
+}
+
+export async function commitAction(repo: string, input: CommitAction) {
+  const target = await resolveCommitSelection(repo, input.sha);
+  const { action } = input;
+  if (action === 'create' || action === 'tag') {
+    if (!input.name || input.name.startsWith('-') || input.name.startsWith('@{')) throw new Failure('Укажите допустимое имя.');
+    if (action === 'create') {
+      await git(repo, ['check-ref-format', '--branch', input.name]);
+      await git(repo, ['branch', '--', input.name, target]);
+    } else await git(repo, ['tag', '--', input.name, target]);
+    return gitStatus(repo);
+  }
+  const state = await gitStatus(repo);
+  if (!state.head || state.head !== input.head || state.branch !== input.current) {
+    throw new Failure('Текущая ветка или HEAD изменились. Откройте меню коммита заново.', 'git');
+  }
+  const paths = await ensureNoGitOperation(repo);
+  if (action === 'reset') {
+    if (!state.branch || !['soft', 'mixed', 'hard'].includes(input.mode)) throw new Failure('Выберите ветку и режим сброса.');
+    await git(repo, ['reset', '--' + input.mode, target]);
+  } else if (action === 'checkout') {
+    await git(repo, ['switch', '--detach', target]);
+  } else if (action === 'cherry-pick' || action === 'revert' || action === 'rebase') {
+    if (!state.branch || state.status) throw new Failure('Переключитесь на локальную ветку и сохраните изменения в рабочем дереве.', 'dirty');
+    const parents = (await command(repo, ['show', '-s', '--format=%P', target, '--'])).split(' ').filter(Boolean);
+    const parent = input.action === 'cherry-pick' || input.action === 'revert' ? input.parent : undefined;
+    if (action !== 'rebase' && parents.length > 1 && (!parent || !Number.isInteger(parent) || parent > parents.length || parent < 1)) {
+      throw new Failure('Выберите родителя коммита слияния.');
+    }
+    const args = action === 'rebase' ? ['rebase', '--no-autostash', '--no-update-refs', target]
+      : [action, '--no-edit', ...(parents.length > 1 ? ['-m', String(parent)] : []), target];
+    await runWithAbort(repo, args, paths);
+  } else throw new Failure('Неизвестное действие с коммитом.');
+  return gitStatus(repo);
+}
 async function assertClean(repo: string) {
   const status = await gitStatus(repo);
   if (status.status) throw new Failure('Рабочее дерево содержит изменения. Сохраните их перед операцией.', 'dirty');
@@ -234,6 +291,86 @@ export async function changeBranch(repo: string, branch: string, create: boolean
   await git(repo, ['check-ref-format', '--branch', branch]);
   await git(repo, create ? ['switch', '-c', branch] : ['switch', '--no-guess', '--', branch]);
   return gitStatus(repo);
+}
+export async function branchAction(repo: string, input: BranchAction) {
+  const { ref, action } = input;
+  const state = await gitStatus(repo);
+  const local = state.localBranches.find(name => 'refs/heads/' + name === ref);
+  const remote = state.remoteBranches.find(name => 'refs/remotes/' + name === ref);
+  if (!local && !remote) throw new Failure('Ветка больше не доступна.', 'git');
+  if (action === 'merge' || action === 'rebase') {
+    await integrateBranch(repo, input, state);
+  } else if (action === 'tag') {
+    if (!input.name || input.name.startsWith('-')) throw new Failure('Укажите имя тега.');
+    await git(repo, ['tag', '--', input.name, ref]);
+  } else if (action === 'create' || action === 'rename') {
+    if (!input.name || input.name.startsWith('-') || input.name.startsWith('@{')) throw new Failure('Укажите имя локальной ветки.');
+    await git(repo, ['check-ref-format', '--branch', input.name]);
+    if (action === 'create') await git(repo, ['switch', '-c', input.name, ...(state.head || remote ? [ref] : [])]);
+    else if (local) await git(repo, ['branch', '-m', '--', local, input.name]);
+    else throw new Failure('Переименование доступно для локальной ветки.');
+  } else if (action === 'delete') {
+    if (!local || local === state.branch) throw new Failure('Для удаления выберите другую локальную ветку.');
+    await git(repo, ['branch', '-d', '--', local]);
+  } else if (action === 'switch') {
+    if (local) {
+      if (local !== state.branch) await git(repo, ['switch', '--no-guess', '--', local]);
+    } else {
+      const name = (await command(repo, ['remote'])).split(/\r?\n/)
+        .filter(name => remote?.startsWith(name + '/')).sort((a, b) => b.length - a.length)[0];
+      if (!name || !remote) throw new Failure('Удалённый репозиторий ветки не настроен.');
+      const branch = remote.slice(name.length + 1);
+      if (!state.localBranches.includes(branch)) await git(repo, ['switch', '--track', '-c', branch, ref]);
+      else {
+        const upstream = await command(repo, ['rev-parse', '--symbolic-full-name', '--verify', branch + '@{upstream}']).catch(() => '');
+        if (upstream !== ref) throw new Failure('Одноимённая локальная ветка уже существует. Выберите её в списке локальных веток.');
+        if (branch !== state.branch) await git(repo, ['switch', '--no-guess', '--', branch]);
+      }
+    }
+  } else throw new Failure('Неизвестное действие с веткой.');
+  return gitStatus(repo);
+}
+async function integrateBranch(repo: string, input: Extract<BranchAction, { action: 'merge' | 'rebase' }>, state: Awaited<ReturnType<typeof gitStatus>>) {
+  const { action, ref } = input;
+  if (!state.branch || !state.head || state.branch !== input.current || state.head !== input.head) {
+    throw new Failure('Текущая ветка или её коммит изменились. Откройте меню ветки заново.', 'git');
+  }
+  if (ref === 'refs/heads/' + state.branch) throw new Failure('Выберите другую ветку.', 'git');
+  if (state.status) throw new Failure('Сохраните изменения в рабочем дереве перед слиянием или rebase.', 'dirty');
+  const paths = await ensureNoGitOperation(repo);
+  const target = await resolveCommit(repo, ref);
+  await runWithAbort(repo, action === 'merge' ? ['merge', '--no-edit', target] : ['rebase', '--no-autostash', '--no-update-refs', target], paths);
+}
+
+async function gitPathExists(repo: string, path: string) {
+  try { await fs.stat(resolve(repo, path)); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function ensureNoGitOperation(repo: string) {
+  const markers = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer'];
+  const paths = (await command(repo, ['rev-parse', ...markers.flatMap(marker => ['--git-path', marker])])).split(/\r?\n/);
+  if ((await Promise.all(paths.map(path => gitPathExists(repo, path)))).some(Boolean)) {
+    throw new Failure('Завершите текущую операцию Git перед продолжением.', 'git');
+  }
+  return paths;
+}
+
+async function runWithAbort(repo: string, args: string[], paths: string[]) {
+  const [action] = args;
+  try {
+    await git(repo, args);
+  } catch (error) {
+    const operationPaths = action === 'merge' ? paths.slice(0, 1) : action === 'rebase' ? paths.slice(1, 3)
+      : [paths[action === 'cherry-pick' ? 3 : 4], paths[5]];
+    if (!(await Promise.all(operationPaths.map(path => gitPathExists(repo, path)))).some(Boolean)) throw error;
+    try { await git(repo, [action, '--abort']); }
+    catch { throw new Failure('Git не смог отменить операцию. Проверьте рабочее дерево и завершите или отмените операцию в Git.', 'git'); }
+    throw new Failure('Операция остановлена. Git восстановил исходное состояние.', 'git');
+  }
 }
 export async function fetchRemote(repo: string) {
   await git(repo, ['fetch', '--all']);
