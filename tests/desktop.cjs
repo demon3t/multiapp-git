@@ -249,7 +249,7 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     await writeFile(name, Buffer.from(data, 'base64'));
   };
   await capture(process.env.MGIT_TEST_GIT_SCREENSHOT);
-  await evaluate('document.querySelector(".working-toolbar .working-modes button:last-child").click()');
+  await evaluate('document.querySelector(\'.working-toolbar button[aria-label="До и после"]\').click()');
   const row = 'document.querySelectorAll(".working-split .working-diff-columns")';
   assert.deepEqual(await evaluate('Array.from(' + row + '[1].querySelectorAll("code"), cell => cell.textContent)'), ['# Old notes', '# Project notes']);
   assert.deepEqual(await evaluate('Array.from(' + row + '[2].querySelectorAll("code"), cell => cell.textContent)'), ['', 'Extra line']);

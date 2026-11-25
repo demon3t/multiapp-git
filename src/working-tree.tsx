@@ -136,8 +136,20 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
     <div className="working-toolbar">
       <button type="button" onClick={() => { setSelection(undefined); refresh(); }}>Обновить список</button>
       <div className="working-modes" role="group" aria-label="Режим просмотра diff">
-        <button type="button" aria-pressed={!split} onClick={() => setSplit(false)}>В линию</button>
-        <button type="button" aria-pressed={split} onClick={() => setSplit(true)}>До и после</button>
+        <button className="working-mode-icon" type="button" aria-label="В линию" title="В линию"
+          aria-pressed={!split} onClick={() => setSplit(false)}>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1"/>
+            <path d="M4 6h8M4 10h8"/>
+          </svg>
+        </button>
+        <button className="working-mode-icon" type="button" aria-label="До и после" title="До и после"
+          aria-pressed={split} onClick={() => setSplit(true)}>
+          <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round">
+            <rect x="1.5" y="2.5" width="13" height="11" rx="1"/>
+            <path d="M8 3v10M4 6h1.5M4 10h1.5m5-4H12m-1.5 4H12"/>
+          </svg>
+        </button>
       </div>
     </div>
     <div className="working-layout">
