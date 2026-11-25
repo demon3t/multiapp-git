@@ -365,11 +365,11 @@ function App() {
     {busy && <div role="status" className="notice progress"><progress aria-label={busy}/>{busy}…</div>}
     {error && <div className="error operation-toast-result">
       <div role="alert"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>
-      <button className="toast-close" type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setError(undefined)}>×</button>
+      <button className="toast-close" type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setError(undefined)}/>
     </div>}
     {message && <div className="notice success operation-toast-result">
       <div role="status">{message}</div>
-      <button className="toast-close" type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setMessage('')}>×</button>
+      <button className="toast-close" type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setMessage('')}/>
     </div>}
     {updateNotification}
     {askUpdatePermission && <section className="notice operation-toast-result" aria-labelledby="update-permission">
