@@ -243,7 +243,10 @@ export async function branchAction(repo: string, input: BranchAction) {
   const local = state.localBranches.find(name => 'refs/heads/' + name === ref);
   const remote = state.remoteBranches.find(name => 'refs/remotes/' + name === ref);
   if (!local && !remote) throw new Failure('Ветка больше не доступна.', 'git');
-  if (action === 'create' || action === 'rename') {
+  if (action === 'tag') {
+    if (!input.name || input.name.startsWith('-')) throw new Failure('Укажите имя тега.');
+    await git(repo, ['tag', '--', input.name, ref]);
+  } else if (action === 'create' || action === 'rename') {
     if (!input.name || input.name.startsWith('-') || input.name.startsWith('@{')) throw new Failure('Укажите имя локальной ветки.');
     await git(repo, ['check-ref-format', '--branch', input.name]);
     if (action === 'create') await git(repo, ['switch', '-c', input.name, ...(state.head || remote ? [ref] : [])]);

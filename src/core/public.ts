@@ -11,7 +11,7 @@ export type GitState = {
 };
 export type WorkingFile = { path: string; previousPath?: string; index: string; worktree: string };
 export type BranchAction = { ref: string } & (
-  { action: 'switch' | 'delete' } | { action: 'create' | 'rename'; name: string }
+  { action: 'switch' | 'delete' } | { action: 'create' | 'rename' | 'tag'; name: string }
 );
 export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
 export type GitCommitFile = { status: string; path: string; previousPath?: string };
@@ -46,6 +46,7 @@ export type Requests = {
   commitPatch: [{ repo: string; sha: string; paths: string[] }, string];
   branch: [{ repo: string; branch: string; create: boolean }, GitState];
   branchAction: [BranchAction & { repo: string }, GitState];
+  copyBranchName: [{ repo: string; ref: string }, void];
   fetch: [string, GitState];
   pull: [string, GitState];
   push: [string, GitState];

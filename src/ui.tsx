@@ -102,7 +102,7 @@ function App() {
   const [appMenu, setAppMenu] = useState(false);
   const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
   const [branchMenu, setBranchMenu] = useState<BranchMenuTarget>();
-  const [branchDialog, setBranchDialog] = useState<{ ref: string; action: 'create' | 'rename' | 'delete' }>();
+  const [branchDialog, setBranchDialog] = useState<{ ref: string; action: 'create' | 'rename' | 'delete' | 'tag' }>();
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -245,6 +245,8 @@ function App() {
       if (action.action === 'switch' || action.action === 'create') {
         showGitHistory('refs/heads/' + result.branch);
         setMessage('Текущая ветка: ' + result.branch);
+      } else if (action.action === 'tag') {
+        setMessage('Тег создан.');
       } else {
         if (historyRef === action.ref) showGitHistory(action.action === 'rename' ? 'refs/heads/' + action.name : undefined);
         setMessage(action.action === 'rename' ? 'Ветка переименована.' : 'Ветка удалена.');
@@ -257,6 +259,7 @@ function App() {
     setBranchMenu(undefined);
     if (command === 'history') showGitHistory(ref);
     else if (command === 'switch') changeSelectedBranch({ ref, action: 'switch' });
+    else if (command === 'copy') void run('copyBranchName', { repo, ref }, 'Копирование имени ветки');
     else setBranchDialog({ ref, action: command });
   }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {

@@ -2,8 +2,8 @@ import React, { useLayoutEffect, useRef, useState } from 'react';
 import type { BranchAction } from './core/public';
 
 export type BranchMenuTarget = { ref: string; anchor: HTMLButtonElement };
-export type BranchCommand = BranchAction['action'] | 'history';
-type EditAction = 'create' | 'rename' | 'delete';
+export type BranchCommand = BranchAction['action'] | 'history' | 'copy';
+type EditAction = 'create' | 'rename' | 'delete' | 'tag';
 
 export function BranchMenu({ target, current, onClose, onCommand }: {
   target: BranchMenuTarget; current: string; onClose: () => void; onCommand: (command: BranchCommand) => void;
@@ -16,7 +16,7 @@ export function BranchMenu({ target, current, onClose, onCommand }: {
     const anchor = target.anchor.getBoundingClientRect();
     box.style.left = Math.max(4, Math.min(anchor.left, window.innerWidth - box.offsetWidth - 4)) + 'px';
     box.style.top = Math.max(4, Math.min(anchor.bottom, window.innerHeight - box.offsetHeight - 4)) + 'px';
-    box.querySelector('button')?.focus();
+    box.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus({ preventScroll: true });
     function outside(event: PointerEvent) {
       if (event.target instanceof Node && !box.contains(event.target) && !target.anchor.contains(event.target)) onClose();
     }
@@ -28,11 +28,19 @@ export function BranchMenu({ target, current, onClose, onCommand }: {
       if (target.anchor.isConnected && box.contains(document.activeElement)) target.anchor.focus();
     };
   }, [target, onClose]);
-  const item = (command: BranchCommand, label: string, disabled = false) =>
-    <button type="button" role="menuitem" className="menu-command" disabled={disabled} onClick={() => onCommand(command)}>{label}</button>;
+  const item = (command: BranchCommand, label: string, disabled = false, shortcut?: string) =>
+    <button type="button" role="menuitem" className="menu-command" disabled={disabled}
+      aria-label={label} aria-keyshortcuts={shortcut} onClick={() => onCommand(command)}>
+      <span>{label}</span>{shortcut && <kbd aria-hidden="true">{shortcut.replace('Control', 'Ctrl')}</kbd>}
+    </button>;
   return <div ref={menu} role="menu" aria-label={name} className="repo-menu-panel branch-menu" onKeyDown={event => {
     if (event.key === 'Escape' || event.key === 'Tab') {
       event.preventDefault(); event.stopPropagation(); onClose();
+    } else if ((event.ctrlKey && event.key.toLowerCase() === 'c') ||
+      (local && (event.key === 'F2' || (event.key === 'Delete' && name !== current)))) {
+      event.preventDefault();
+      event.stopPropagation();
+      onCommand(event.key === 'F2' ? 'rename' : event.key === 'Delete' ? 'delete' : 'copy');
     } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
       event.preventDefault();
       const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')] as HTMLButtonElement[];
@@ -42,19 +50,22 @@ export function BranchMenu({ target, current, onClose, onCommand }: {
       buttons[next]?.focus();
     }
   }}>
-    <div className="branch-menu-name" title={name}>{name}</div>
-    {item('history', 'Показать историю')}
     {item('switch', 'Переключить ветку', local && name === current)}
+    {item('history', 'Показать историю')}
+    <div className="menu-separator" role="separator"/>
     {item('create', 'Создать ветку от этой')}
+    {item('tag', 'Создать тег…')}
     {local && <>
       <div className="menu-separator" role="separator"/>
-      {item('rename', 'Переименовать…')}
-      {item('delete', 'Удалить…', name === current)}
+      {item('rename', 'Переименовать…', false, 'F2')}
+      {item('delete', 'Удалить…', name === current, 'Delete')}
     </>}
+    <div className="menu-separator" role="separator"/>
+    {item('copy', 'Копировать имя ветки', false, 'Control+C')}
   </div>;
 }
 
-const titles = { create: 'Создать ветку', rename: 'Переименовать ветку', delete: 'Удалить ветку' };
+const titles = { create: 'Создать ветку', rename: 'Переименовать ветку', delete: 'Удалить ветку', tag: 'Создать тег' };
 
 export function BranchDialog({ refName, action, onClose, onSubmit }: {
   refName: string; action: EditAction; onClose: () => void; onSubmit: (action: BranchAction) => void;
@@ -73,11 +84,11 @@ export function BranchDialog({ refName, action, onClose, onSubmit }: {
       else if (name.trim()) onSubmit({ ref: refName, action, name: name.trim() });
     }}>
       {deleting ? <p>Удалить локальную ветку <strong>{branch}</strong>?</p>
-        : <label>Имя ветки<input value={name} onChange={event => setName(event.target.value)} required autoFocus/></label>}
+        : <label>{action === 'tag' ? 'Имя тега' : 'Имя ветки'}<input value={name} onChange={event => setName(event.target.value)} required autoFocus/></label>}
       <div className="update-dialog-actions">
         <button type="button" onClick={onClose} autoFocus={deleting}>Отмена</button>
         <button className={deleting ? 'danger' : 'primary'} disabled={!deleting && (!name.trim() || action === 'rename' && name.trim() === branch)}>
-          {deleting ? 'Удалить' : action === 'create' ? 'Создать и переключить' : 'Переименовать'}
+          {deleting ? 'Удалить' : action === 'create' ? 'Создать и переключить' : titles[action]}
         </button>
       </div>
     </form>

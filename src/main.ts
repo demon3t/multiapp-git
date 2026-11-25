@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, net, safeStorage, shell } from 'electron';
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
@@ -214,6 +214,13 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   async clone(input) { return openWorkspace(await git.cloneRepo(input.url, input.path)); },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
   branchAction: input => git.branchAction(input.repo, input),
+  async copyBranchName({ repo, ref }) {
+    const { localBranches, remoteBranches } = await git.gitStatus(repo);
+    const name = localBranches.find(name => ref === 'refs/heads/' + name)
+      ?? remoteBranches.find(name => ref === 'refs/remotes/' + name);
+    if (!name) throw new Failure('Ветка больше не доступна.', 'git');
+    clipboard.writeText(name);
+  },
   workingPatch: input => git.workingPatch(input.repo, input.path, input.staged),
   stageFile: input => git.stageFile(input.repo, input.path, input.staged),
   commitStaged: input => git.commitStaged(input.repo, input.message),
@@ -312,7 +319,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases', 'copyBranchName']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', branchAction: 'Операция с веткой', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
