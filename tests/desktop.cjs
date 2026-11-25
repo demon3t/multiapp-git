@@ -219,8 +219,12 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   const localGit = (...args) => execFileSync('git', args, { cwd: localRepo, encoding: 'utf8' });
   localGit('config', 'user.name', 'mGit test');
   localGit('config', 'user.email', 'test@example.invalid');
-  await writeFile(join(localRepo, 'README.md'), '# Project notes\n');
-  await writeFile(join(localRepo, 'notes [draft].txt'), 'Keep this local\n');
+  await writeFile(join(localRepo, 'README.md'), '# Old notes\nCommon line\n');
+  localGit('add', 'README.md');
+  localGit('commit', '-m', 'Initialize project notes');
+  await writeFile(join(localRepo, 'README.md'), '# Project notes\nExtra line\nCommon line\n');
+  await mkdir(join(localRepo, 'docs', 'drafts'), { recursive: true });
+  await writeFile(join(localRepo, 'docs', 'drafts', 'notes [draft].txt'), 'Keep this local\n');
   await evaluate('document.querySelector(".brand").click()');
   await devtools('Page.reload', {});
   const localTab = 'Array.from(document.querySelectorAll(".app-tabs button")).find(button => button.textContent === "initialized")';
@@ -230,27 +234,47 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   const fileButton = 'document.querySelector(' + JSON.stringify(file) + ')';
   for (let attempt = 0; attempt < 50 && !(await evaluate('!!' + fileButton + ' && !' + fileButton + '.matches(":disabled")')); attempt++) await wait(100);
   assert.equal(await evaluate('!!' + fileButton), true, await evaluate('document.querySelector("main")?.innerText'));
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".working-file-tree summary"), node => node.textContent)'), ['docs', 'drafts']);
+  assert.equal(await evaluate('document.querySelectorAll(".working-file-tree .working-file-name").length'), 2);
+  assert.doesNotMatch(await evaluate('document.querySelector(".working-files").innerText'), /Изменённые файлы|В индексе/);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".operation"), x => x.textContent)'), ['PULL', 'FETCH', 'PUSH']);
   await evaluate('document.querySelector(' + JSON.stringify(file) + ').click()');
   const patch = 'document.querySelector(".working-file-patch pre")?.textContent';
   for (let attempt = 0; attempt < 30 && !(await evaluate(patch)); attempt++) await wait(100);
   assert.match(await evaluate(patch) ?? '', /\+# Project notes/, await evaluate('document.querySelector("main")?.innerText'));
-  const stage = 'document.querySelector(' + JSON.stringify(file) + ').nextElementSibling.click()';
-  await evaluate(stage);
-  const index = 'document.querySelectorAll(".working-file-group:nth-child(2) li").length';
+  assert.match(await evaluate(patch), /-# Old notes/);
+  const capture = async name => {
+    if (!name) return;
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(name, Buffer.from(data, 'base64'));
+  };
+  await capture(process.env.MGIT_TEST_GIT_SCREENSHOT);
+  await evaluate('document.querySelector(".working-toolbar .working-modes button:last-child").click()');
+  const row = 'document.querySelectorAll(".working-split .working-diff-columns")';
+  assert.deepEqual(await evaluate('Array.from(' + row + '[1].querySelectorAll("code"), cell => cell.textContent)'), ['# Old notes', '# Project notes']);
+  assert.deepEqual(await evaluate('Array.from(' + row + '[2].querySelectorAll("code"), cell => cell.textContent)'), ['', 'Extra line']);
+  assert.deepEqual(await evaluate('Array.from(' + row + '[3].querySelectorAll(".working-line-number"), cell => cell.textContent)'), ['2', '3']);
+  await capture(process.env.MGIT_TEST_GIT_SPLIT_SCREENSHOT);
+  const selectFile = fileButton + '.click()';
+  const stage = 'document.querySelector(".working-diff-header button[data-stage]")';
+  const waitForStage = async type => {
+    for (let attempt = 0; attempt < 30 && !(await evaluate(stage + '?.dataset.stage === ' + JSON.stringify(type) + ' && !' + stage + '?.matches(":disabled")')); attempt++) await wait(100);
+    assert.equal(await evaluate(stage + '?.dataset.stage'), type);
+  };
+  await waitForStage('add');
+  await evaluate(stage + '.click()');
+  const index = 'document.querySelectorAll(".working-file-tree .working-index-mark").length';
   for (let attempt = 0; attempt < 30 && await evaluate(index) !== 1; attempt++) await wait(100);
   assert.equal(localGit('diff', '--cached', '--name-only').trim(), 'README.md');
-  await evaluate(stage);
+  await evaluate(selectFile);
+  await waitForStage('remove');
+  await evaluate(stage + '.click()');
   for (let attempt = 0; attempt < 30 && await evaluate(index) !== 0; attempt++) await wait(100);
-  assert.match(localGit('status', '--short'), /\?\? README\.md/);
-  await evaluate(stage);
+  assert.match(localGit('status', '--short'), / M README\.md/);
+  await evaluate(selectFile);
+  await waitForStage('add');
+  await evaluate(stage + '.click()');
   for (let attempt = 0; attempt < 30 && await evaluate(index) !== 1; attempt++) await wait(100);
-  if (process.env.MGIT_TEST_GIT_SCREENSHOT) {
-    await evaluate('document.querySelector(' + JSON.stringify(file) + ').click()');
-    for (let attempt = 0; attempt < 30 && !(await evaluate(patch)); attempt++) await wait(100);
-    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
-    await writeFile(process.env.MGIT_TEST_GIT_SCREENSHOT, Buffer.from(data, 'base64'));
-  }
   await evaluate(`(() => {
     const field = document.querySelector('.working-files input');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, 'Add project notes');
@@ -260,7 +284,7 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   for (let attempt = 0; attempt < 30 && await evaluate(index) !== 0; attempt++) await wait(100);
   assert.equal(localGit('log', '-1', '--format=%s').trim(), 'Add project notes');
   assert.equal(localGit('ls-files').trim(), 'README.md');
-  assert.equal(await readFile(join(localRepo, 'notes [draft].txt'), 'utf8'), 'Keep this local\n');
+  assert.equal(await readFile(join(localRepo, 'docs', 'drafts', 'notes [draft].txt'), 'utf8'), 'Keep this local\n');
   const plain = JSON.parse(await readFile(join(profile, 'mgit.json'), 'utf8')).profiles.find(item => item.type === 'git');
   assert.deepEqual(Object.keys(plain.profile).sort(), ['id', 'name']);
   assert.equal(plain.repo, localRepo);
