@@ -96,6 +96,7 @@ function App() {
   const [backup, setBackup] = useState(true);
   const [confirm, setConfirm] = useState('');
   const [validation, setValidation] = useState<Requests['validate'][1]>();
+  const [operationLog, setOperationLog] = useState<string[]>([]);
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
   const [dismissedUpdate, setDismissedUpdate] = useState('');
@@ -143,11 +144,12 @@ function App() {
   ) {
     if (busy) return;
     setBusy(title); setError(undefined); setMessage('');
+    setOperationLog(log => [...log, title + '…']);
     try {
       const result = await window.mgit.call(method, input);
-      if (result.ok) await complete?.(result.data);
-      else setError({ message: result.message, details: result.details });
-    } catch { setError({ message: 'Связь с процессом mGit прервалась.' }); }
+      if (result.ok) { setOperationLog(log => [...log, title + ': готово']); await complete?.(result.data); }
+      else { setOperationLog(log => [...log, title + ': ошибка — ' + result.message]); setError({ message: result.message, details: result.details }); }
+    } catch { setOperationLog(log => [...log, title + ': ошибка связи']); setError({ message: 'Связь с процессом mGit прервалась.' }); }
     finally { setBusy(''); }
   }
   useEffect(() => { void run('profiles', undefined, 'Загрузка профилей', data => { setProfiles(data); setProfileId(data[0]?.id ?? ''); }); }, []);
@@ -216,6 +218,7 @@ function App() {
   }
   function navigate(next: Page) {
     setPage(next); setError(undefined); setMessage('');
+    if (next === 'Импорт' && git.branch) setRef(git.branch);
     if (next === 'История операций') void run('history', undefined, 'Загрузка журнала', setHistory);
   }
   function editApplication(application?: ProfileSummary) {
@@ -320,6 +323,34 @@ function App() {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
   }
+  async function executeExport() {
+    if (busy || !selected.length) return;
+    setBusy('Экспорт'); setError(undefined); setMessage('');
+    try {
+      const prepared = await window.mgit.call('exportPreview', { ...context, selected });
+      if (!prepared.ok) throw prepared;
+      setOperationLog(log => [...log, 'Экспорт: подготовка завершена']);
+      const written = await window.mgit.call('write', prepared.data.id);
+      if (!written.ok) throw written;
+      const committed = await window.mgit.call('commit', { id: prepared.data.id, message: 'Export Superset metadata' });
+      if (!committed.ok) throw committed;
+      setGit(committed.data); setMessage('Экспорт завершён.'); setOperationLog(log => [...log, 'Экспорт: коммит создан']);
+    } catch (caught) { const failure = caught as { message?: string; details?: unknown }; setError({ message: failure.message || 'Экспорт не завершён.', details: failure.details }); setOperationLog(log => [...log, 'Экспорт: ошибка']); }
+    finally { setBusy(''); }
+  }
+  async function executeImport() {
+    if (busy || !selected.length || !profile) return;
+    setBusy('Импорт'); setError(undefined); setMessage('');
+    try {
+      const planned = await window.mgit.call('plan', { ...context, ref: git.branch || ref, selected });
+      if (!planned.ok) throw planned;
+      setOperationLog(log => [...log, 'Импорт: план подготовлен']);
+      const applied = await window.mgit.call('apply', { id: planned.data.id, confirm: profile.name + ' ' + planned.data.sha, backup: false });
+      if (!applied.ok) throw applied;
+      statusResult(applied.data); setOperationLog(log => [...log, applied.data.verified ? 'Импорт: проверка пройдена' : 'Импорт: проверка не пройдена']);
+    } catch (caught) { const failure = caught as { message?: string; details?: unknown }; setError({ message: failure.message || 'Импорт не завершён.', details: failure.details }); setOperationLog(log => [...log, 'Импорт: ошибка']); }
+    finally { setBusy(''); }
+  }
 
   function checkForUpdates() {
     setUpdateMenu(false);
@@ -373,15 +404,10 @@ function App() {
     return () => window.removeEventListener('keydown', handleShortcut);
   });
 
-  const contextPanel = <div className="context">
-    <label>Superset<div className="readout" title={profile?.url}>{profile?.url || 'Выберите приложение'}</div></label>
-    <label>Репозиторий<div className="readout" title={repo}>{repo || 'Откройте репозиторий'}</div></label>
-    <label>{page === 'Импорт' ? 'Ветка, тег или коммит' : 'Текущая ветка'}
-      {page === 'Импорт' ? <input value={ref} list="refs" onChange={e => { setRef(e.target.value); invalidate(); }}/> : <div className="readout">{git.branch || '—'}</div>}</label>
-    <label>Каталог снимка<input value={folder} list="snapshot-folders" onChange={e => { setFolderInput(e.target.value); invalidate(); }}/></label>
-    <datalist id="refs">{[...new Set([...git.localBranches, ...git.remoteBranches, ...git.tags])].map(name => <option key={name} value={name}/>)}</datalist>
-    <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
-  </div>;
+  const contextPanel = null;
+  const selectableAssets = assets.filter(asset => asset.kind === 'datasets' || asset.kind === 'charts');
+  const operationLogPanel = (page === 'Экспорт' || page === 'Импорт') && <section className="panel operation-log"><h2>Лог операции</h2>
+    <pre>{operationLog.length ? operationLog.join('\n') : 'Операции ещё не запускались.'}</pre></section>;
 
   const fileWorkspace = page === 'Репозитории' && !cloning && Boolean(repo) && profile?.type === 'git';
   const askUpdatePermission = update?.askPermission && !updateMenu && !showUpdateDialog && !updateNotification;
@@ -599,52 +625,21 @@ function App() {
           </>}
         </section>}
       </>}
-      {page === 'Экспорт' && <>{contextPanel}<section className="panel">
-        <h2>Состав снимка</h2>
-        <label className="check"><input type="checkbox" checked={partial} onChange={e => { setPartial(e.target.checked); invalidate(); }}/>Выбор объектов с зависимостями</label>
-        {partial && <><div className="actions"><button disabled={!profile} onClick={() => run('inventory', profileId, 'Получение объектов Superset', value => { setAssets(value); setSelected([]); invalidate(); })}>Загрузить список объектов</button></div>
-          <div className="asset-list">{assets.map(asset => <label className="check" key={asset.uuid}><input type="checkbox" checked={selected.includes(asset.uuid)} onChange={e => {
+      {page === 'Экспорт' && <section className="panel">
+        <h2>Выберите объекты для экспорта</h2>
+        <div className="actions"><button disabled={!profile} onClick={() => run('inventory', profileId, 'Получение объектов Superset', value => { setAssets(value); setSelected([]); invalidate(); })}>Обновить список</button></div>
+          <div className="asset-list">{selectableAssets.map(asset => <label className="check" key={asset.uuid}><input type="checkbox" checked={selected.includes(asset.uuid)} onChange={e => {
             setSelected(e.target.checked ? [...selected, asset.uuid] : selected.filter(id => id !== asset.uuid)); invalidate();
-          }}/>{asset.name} <span className="hint">{labels[asset.kind]}</span></label>)}</div></>}
-        <div className="actions"><button className="primary" disabled={!applicationReady || !git.branch || (partial && !selected.length)}
-          onClick={() => { invalidate(); void run('exportPreview', { ...context, selected: partial ? selected : [] }, 'Экспорт и проверка YAML', setPreview); }}>Подготовить экспорт</button></div>
-      </section>
-      {preview && <section className="panel"><h2>Изменения снимка</h2><Counts values={preview.counts}/>
-        <p className="hint">Файлов с изменениями: {preview.changes.length}.</p>
-        {preview.issues.length > 0 && <details className="notice"><summary>Неполные зависимости: {preview.issues.length}</summary>
-          <div className="asset-list">{preview.issues.map((issue, i) => <p key={i}>{issue.path} · {issue.message}</p>)}</div>
-        </details>}
-        <Changes key={preview.id} changes={preview.changes}/>
-        <div className="actions"><button className="primary" disabled={written || !preview.changes.length}
-          onClick={() => run('write', preview.id, 'Запись снимка', state => { setGit(state); setWritten(true); setMessage('Снимок записан.'); })}>Записать снимок</button></div>
-        {written && <div className="actions"><input aria-label="Сообщение коммита" value={commitMessage} onChange={e => setCommitMessage(e.target.value)} placeholder="Сообщение коммита"/>
-          <button disabled={!commitMessage.trim()} onClick={() => run('commit', { id: preview.id, message: commitMessage }, 'Создание коммита', result => {
-            updateGit(result); setRef(result.head); setCommitMessage(''); setMessage('Коммит создан: ' + result.head);
-          })}>Создать коммит</button></div>}
-      </section>}</>}
-      {page === 'Импорт' && <>{contextPanel}<section className="panel"><h2>Предварительная проверка</h2>
-        <label className="check"><input type="checkbox" checked={only} onChange={e => { setOnly(e.target.checked); invalidate(); }}/>Только метаданные · локальная проверка</label>
-        <label className="check"><input type="checkbox" checked={compatibleOnly} onChange={e => { setCompatibleOnly(e.target.checked); invalidate(); }}/>Частичный снимок · исключить объекты с ошибками и зависящие от них объекты</label>
-        <div className="actions"><button disabled={!repo || !ref.trim()} className={only ? 'primary' : ''}
-          onClick={() => run('validate', { repo, ref, folder, compatibleOnly }, 'Локальная проверка', result => { setValidation(result); setMessage(result.excluded.length ? 'Совместимая часть прошла локальную проверку.' : 'Снимок прошёл локальную проверку.'); })}>Проверить снимок</button>
-          {!only && <><button className="primary" disabled={!applicationReady || !ref.trim()} onClick={() => {
-            setPlan(undefined); setConfirm(''); void run('plan', { ...context, ref, compatibleOnly }, 'Подготовка плана импорта', setPlan);
-          }}>Построить план</button><button disabled={!applicationReady || !ref.trim()} onClick={() => run('verify', { ...context, ref, compatibleOnly }, 'Проверка цели', statusResult)}>Проверить UUID и связи на цели</button></>}
-        </div>
-        {validation && <><p className="hint mono">{validation.sha}</p><Counts values={validation.counts}/><Exclusions items={validation.excluded}/></>}
-      </section>
-      {plan && !only && <section className="panel"><h2>План импорта</h2>
-        <p className="hint">{plan.url} · Superset {plan.version}</p><p className="hint mono">{plan.sha}</p>
-        <Counts values={plan.counts}/>
-        <Exclusions items={plan.excluded}/>
-        <div className="asset-list">{plan.assets.map(asset => <div className="plan-row" key={asset.uuid}><span>{asset.name}</span><span className={'tag ' + asset.action}>{actionNames[asset.action ?? '']}</span><span className="hint">{labels[asset.kind]}</span></div>)}</div>
-        <p className="hint">При применении Superset может обращаться к аналитическим подключениям целевого окружения.</p>
-        <label className="check"><input type="checkbox" checked={backup} onChange={e => setBackup(e.target.checked)}/>Сохранить резервный экспорт метаданных</label>
-        {profile && <label>Введите название приложения и полный SHA через пробел<input placeholder={profile.name + ' ' + plan.sha} value={confirm} onChange={e => setConfirm(e.target.value)}/></label>}
-        <div className="actions"><button className="primary"
-          disabled={!profile || confirm !== profile.name + ' ' + plan.sha}
-          onClick={() => run('apply', { id: plan.id, confirm, backup }, 'Импорт и проверка Superset', result => { setPlan(undefined); statusResult(result); })}>Применить коммит</button></div>
-      </section>}</>}
+          }}/>{asset.name} <span className="hint">{labels[asset.kind]}</span></label>)}</div>
+        <div className="actions"><button className="primary" disabled={!applicationReady || !git.branch || !selected.length}
+          onClick={() => void executeExport()}>Экспорт</button></div>
+      </section>}
+      {page === 'Импорт' && <section className="panel"><h2>Выберите объекты для импорта</h2>
+        <div className="actions"><button disabled={!profile} onClick={() => run('inventory', profileId, 'Получение объектов Superset', value => { setAssets(value); setSelected([]); })}>Обновить список</button></div>
+        <div className="asset-list">{selectableAssets.map(asset => <label className="check" key={asset.uuid}><input type="checkbox" checked={selected.includes(asset.uuid)} onChange={e => setSelected(e.target.checked ? [...selected, asset.uuid] : selected.filter(id => id !== asset.uuid))}/>{asset.name} <span className="hint">{labels[asset.kind]}</span></label>)}</div>
+        <div className="actions"><button className="primary" disabled={!applicationReady || !git.branch || !selected.length} onClick={() => void executeImport()}>Импорт</button></div>
+      </section>}
+      {operationLogPanel}
       {page === 'История операций' && <section className="panel">
         {history.length === 0 ? <p className="empty">Операций пока нет.</p> : <table><thead><tr><th>Время</th><th>Действие</th><th>Статус</th></tr></thead>
           <tbody>{history.map((entry, index) => <tr key={entry.time + index}><td>{new Date(entry.time).toLocaleString('ru-RU')}</td><td>{entry.action}</td>

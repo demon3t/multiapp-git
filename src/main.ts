@@ -7,7 +7,7 @@ import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model'
 import { Bridge, Context, Entry, ProfileInput, Requests, TabAppearance, tabIcons } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
-import { prepareSnapshot, summarize } from './core/snapshot';
+import { prepareSnapshot, selectAssets, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 import { checkRelease, downloadInstaller, releaseChanges, releasesPage, UpdateStatus } from './core/updates';
 
@@ -271,7 +271,8 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async validate(input) {
     const source = await sourceSnapshot(input.repo, input.ref, input.folder);
-    const { assets, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
+    const selectedFiles = input.selected?.length ? selectAssets(source.files, input.selected) : source.files;
+    const { assets, excluded } = prepareSnapshot(selectedFiles, input.compatibleOnly);
     return { sha: source.sha, counts: summarize(assets), excluded };
   },
   snapshotFolders: input => git.snapshotFolders(input.repo, input.ref),
@@ -279,7 +280,8 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
     preparedImport = undefined;
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
     const { profile, secret, adapter } = profileFor(input.profileId);
-    const { files, excluded } = prepareSnapshot(source.files, input.compatibleOnly);
+    const selectedFiles = input.selected?.length ? selectAssets(source.files, input.selected) : source.files;
+    const { files, excluded } = prepareSnapshot(selectedFiles, input.compatibleOnly);
     const expected = await planImport(adapter, profile, files, secret.connections);
     const id = randomUUID();
     preparedImport = { ...input, ...source, files, id, expected };
@@ -288,7 +290,8 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   async verify(input) {
     const source = await sourceSnapshot(applicationRepo(input), input.ref, input.folder);
-    const { files } = prepareSnapshot(source.files, input.compatibleOnly);
+    const selectedFiles = input.selected?.length ? selectAssets(source.files, input.selected) : source.files;
+    const { files } = prepareSnapshot(selectedFiles, input.compatibleOnly);
     return verifyImport(profileFor(input.profileId).adapter, files);
   },
   async apply(input) {

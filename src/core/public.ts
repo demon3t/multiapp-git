@@ -65,10 +65,10 @@ export type Requests = {
   exportPreview: [Context & { selected: string[] }, Preview];
   write: [string, GitState];
   commit: [{ id: string; message: string }, GitState];
-  validate: [{ repo: string; folder: string; ref: string; compatibleOnly?: boolean }, { sha: string; counts: Record<string, number>; excluded: Issue[] }];
+  validate: [{ repo: string; folder: string; ref: string; compatibleOnly?: boolean; selected?: string[] }, { sha: string; counts: Record<string, number>; excluded: Issue[] }];
   snapshotFolders: [{ repo: string; ref: string }, string[]];
-  plan: [Context & { ref: string; compatibleOnly?: boolean }, Plan];
-  verify: [Context & { ref: string; compatibleOnly?: boolean }, Verification];
+  plan: [Context & { ref: string; compatibleOnly?: boolean; selected?: string[] }, Plan];
+  verify: [Context & { ref: string; compatibleOnly?: boolean; selected?: string[] }, Verification];
   apply: [{ id: string; confirm: string; backup: boolean }, Verification];
   history: [undefined, Entry[]];
   updateStatus: [undefined, UpdateView];
