@@ -4,11 +4,12 @@ import type { UpdateChanges } from './core/updates';
 
 const headings = { New: ['Новое', '✦'], Improved: ['Улучшения', '↗'], Fixed: ['Исправления', '✓'] } as const;
 
-export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; busy: boolean; onClose: () => void }) {
+export function UpdateDialog({ update, busy, onClose, notification, onError }: {
+  update: UpdateView; busy: boolean; onClose: () => void; notification: React.ReactNode; onError: (message: string) => void;
+}) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [changes, setChanges] = useState<UpdateChanges>();
   const [notesError, setNotesError] = useState(false);
-  const [installError, setInstallError] = useState('');
   const [starting, setStarting] = useState(false);
   const installing = update.status === 'installing';
   const downloading = update.status === 'downloading';
@@ -27,15 +28,14 @@ export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; bu
   }, [update.latest]);
 
   async function install() {
-    setInstallError('');
     setStarting(true);
     try {
       const result = update.canInstall
         ? await window.mgit.call('installUpdate', undefined)
         : await window.mgit.call('openReleases', undefined);
-      if (!result.ok) setInstallError(result.message);
+      if (!result.ok) onError(result.message);
     } catch {
-      setInstallError('Не удалось запустить обновление.');
+      onError('Не удалось запустить обновление.');
     } finally {
       setStarting(false);
     }
@@ -54,8 +54,7 @@ export function UpdateDialog({ update, busy, onClose }: { update: UpdateView; bu
           <ul>{changes[group].map((item, index) => <li key={index}>{item}</li>)}</ul>
         </section>)}
     </div>
-    {downloading && <progress max={100} value={update.progress ?? 0} aria-label="Ход загрузки обновления"/>}
-    {(installError || update.message) && <p role="alert">{installError || update.message}</p>}
+    {notification}
     <div className="update-dialog-actions">
       <button onClick={onClose} disabled={updating}>Отмена</button>
       <button className="primary" onClick={() => void install()} disabled={busy || starting || downloading || installing}>

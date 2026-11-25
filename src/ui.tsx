@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import type { AssetSummary, Bridge, Change, Entry, GitState, OpenedRepo, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
+import { UpdateNotification } from './update-notification';
 import { BranchList } from './branch-list';
 import { BranchDialog, BranchMenu, type BranchCommand, type BranchMenuTarget, type EditAction } from './branch-menu';
 import type { BranchAction } from './core/public';
@@ -96,6 +97,8 @@ function App() {
   const [validation, setValidation] = useState<Requests['validate'][1]>();
   const [history, setHistory] = useState<Entry[]>([]);
   const [update, setUpdate] = useState<UpdateView>();
+  const [dismissedUpdate, setDismissedUpdate] = useState('');
+  const [updateError, setUpdateError] = useState('');
   const [updateMenu, setUpdateMenu] = useState(false);
   const [updateDialog, setUpdateDialog] = useState(false);
   const [repoMenu, setRepoMenu] = useState(false);
@@ -117,6 +120,18 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [message]);
 
+  const updateNoticeKey = update ? JSON.stringify([update.status, update.latest, update.message, updateError]) : '';
+  const showUpdateDialog = updateDialog && updateAvailable;
+  const updateNotification = update && (update.status !== 'idle' || updateError) && updateNoticeKey !== dismissedUpdate &&
+    <UpdateNotification update={updateError ? { ...update, status: 'error', message: updateError } : update}
+      dismiss={() => setDismissedUpdate(updateNoticeKey)} showDetails={showUpdateDialog ? undefined : () => setUpdateDialog(true)}/>;
+
+  useEffect(() => {
+    if (update?.status !== 'current' && update?.status !== 'no-release') return;
+    const timer = window.setTimeout(() => setDismissedUpdate(updateNoticeKey), 6000);
+    return () => window.clearTimeout(timer);
+  }, [update?.status, updateNoticeKey]);
+
   async function run<K extends keyof Requests>(
     method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void | Promise<void>
   ) {
@@ -132,7 +147,13 @@ function App() {
   useEffect(() => { void run('profiles', undefined, 'Загрузка профилей', data => { setProfiles(data); setProfileId(data[0]?.id ?? ''); }); }, []);
   useEffect(() => {
     let active = true;
-    const unsubscribe = window.mgit.onUpdate(setUpdate);
+    const unsubscribe = window.mgit.onUpdate(status => {
+      if (status.status === 'checking' || status.status === 'downloading') {
+        setDismissedUpdate('');
+        setUpdateError('');
+      }
+      setUpdate(status);
+    });
     void window.mgit.call('updateStatus', undefined).then(result => {
       if (active && result.ok) setUpdate(result.data);
     }).catch(() => undefined);
@@ -278,17 +299,18 @@ function App() {
 
   function checkForUpdates() {
     setUpdateMenu(false);
-    void run('checkUpdate', undefined, 'Проверка обновлений', result => {
-      setUpdate(result);
-      if (result.latest && ['available', 'downloading', 'ready'].includes(result.status)) {
-        setUpdateDialog(true);
-      } else if (result.status === 'current') {
-        setMessage('У вас актуальная версия mGit.');
-      } else if (result.status === 'no-release') {
-        setMessage('В репозитории пока нет опубликованных релизов.');
-      } else if (result.status === 'error') {
-        setError({ message: result.message ?? 'Не удалось проверить обновления.' });
+    setDismissedUpdate('');
+    setUpdateError('');
+    setUpdate(previous => previous && { ...previous, status: 'checking', message: undefined });
+    void window.mgit.call('checkUpdate', undefined).then(result => {
+      if (!result.ok) {
+        setUpdate(previous => previous && { ...previous, status: 'error', message: result.message });
+        return;
       }
+      setUpdate(result.data);
+      if (result.data.latest && ['available', 'downloading', 'ready'].includes(result.data.status)) setUpdateDialog(true);
+    }).catch(() => {
+      setUpdate(previous => previous && { ...previous, status: 'error', message: 'Не удалось проверить обновления.' });
     });
   }
 
@@ -339,6 +361,29 @@ function App() {
   </div>;
 
   const fileWorkspace = page === 'Репозитории' && !cloning && Boolean(repo) && profile?.type === 'git';
+  const askUpdatePermission = update?.askPermission && !updateMenu && !showUpdateDialog && !updateNotification;
+  const notifications = (busy || error || message || updateNotification || askUpdatePermission) && <div className="operation-toasts">
+    {busy && <div role="status" className="notice progress"><progress aria-label={busy}/>{busy}…</div>}
+    {error && <div className="error operation-toast-result">
+      <div role="alert"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>
+      <button type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setError(undefined)}>×</button>
+    </div>}
+    {message && <div className="notice success operation-toast-result">
+      <div role="status">{message}</div>
+      <button type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setMessage('')}>×</button>
+    </div>}
+    {updateNotification}
+    {askUpdatePermission && <section className="notice operation-toast-result" aria-labelledby="update-permission">
+      <div>
+        <h2 id="update-permission">Проверять обновления автоматически?</h2>
+        <p>mGit сможет проверять новые версии ежедневно, пока приложение открыто.</p>
+        <div className="actions">
+          <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', setUpdate)}>Разрешить</button>
+          <button disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: false }, 'Сохранение настроек', setUpdate)}>Нет, спасибо</button>
+        </div>
+      </div>
+    </section>}
+  </div>;
 
   return <div className="shell">
     <div className="tabbar">
@@ -372,13 +417,6 @@ function App() {
         </button>
         {updateMenu && <section className="updates-panel" aria-label="Обновления mGit">
           <h2>mGit {update?.current}</h2>
-          <p role="status">{update?.message ?? ({
-            idle: 'Проверьте наличие новой версии на GitHub.', checking: 'Проверяем GitHub…',
-            current: 'У вас актуальная версия.', available: 'Доступна версия ' + update?.latest + '.',
-            downloading: 'Загрузка установщика · ' + (update?.progress ?? 0) + '%',
-            ready: 'Обновление ' + update?.latest + ' готово к установке.', installing: 'Запускаем установщик…',
-            'no-release': 'В репозитории пока нет опубликованных релизов.', error: 'Проверка не завершилась.'
-          }[update?.status ?? 'idle'])}</p>
           <div className="update-commands">
             <CommandButton command={{ ...commands.checkUpdate, disabled: !!busy || commands.checkUpdate.disabled }}/>
             {updateAvailable && <CommandButton command={commands.updateNotes}/>}
@@ -390,17 +428,10 @@ function App() {
             disabled={!!busy || update?.automatic !== true} onChange={e =>
               run('saveUpdateSettings', { automatic: true, autoInstall: e.target.checked }, 'Сохранение настроек', setUpdate)}/>Скачивать и устанавливать при выходе</label>
         </section>}
-        {update?.askPermission && !updateMenu && <section className="updates-panel" aria-labelledby="update-permission">
-          <h2 id="update-permission">Проверять обновления автоматически?</h2>
-          <p>mGit сможет проверять новые версии ежедневно, пока приложение открыто.</p>
-          <div className="actions">
-            <button className="primary" disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: true }, 'Сохранение настроек', setUpdate)}>Разрешить</button>
-            <button disabled={!!busy} onClick={() => run('saveUpdateSettings', { automatic: false }, 'Сохранение настроек', setUpdate)}>Нет, спасибо</button>
-          </div>
-        </section>}
       </div>
     </div>
-    {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
+    {showUpdateDialog && update && <UpdateDialog key={update.latest} update={update} busy={!!busy}
+      notification={notifications} onError={message => { setDismissedUpdate(''); setUpdateError(message); }} onClose={() => setUpdateDialog(false)}/>}
     {appearanceTab && <TabAppearanceDialog tab={appearanceTab} onClose={() => setAppearanceTab(undefined)} save={async input => {
       const result = await window.mgit.call('saveTabAppearance', input);
       if (!result.ok) throw new Error(result.message);
@@ -450,17 +481,7 @@ function App() {
     {branchMenu && <BranchMenu target={branchMenu} current={git.branch} head={git.head} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
     {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action} current={branchDialog.current} head={branchDialog.head}
       onClose={() => setBranchDialog(undefined)} onSubmit={changeSelectedBranch}/>}
-    {(busy || error || message) && <div className="operation-toasts">
-      {busy && <div role="status" className="notice progress"><progress aria-label={busy}/>{busy}…</div>}
-      {error && <div className="error operation-toast-result">
-        <div role="alert"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>
-        <button type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setError(undefined)}>×</button>
-      </div>}
-      {message && <div className="notice success operation-toast-result">
-        <div role="status">{message}</div>
-        <button type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setMessage('')}>×</button>
-      </div>}
-    </div>}
+    {!showUpdateDialog && notifications}
     <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
       {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
       <fieldset disabled={Boolean(busy)}>
