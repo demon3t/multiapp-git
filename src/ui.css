@@ -36,9 +36,10 @@ table{width:100%;text-align:left;border-collapse:collapse}th,td{padding:10px 5px
 .app-tabs button>span,.tab-appearance-preview>span{overflow:hidden;text-overflow:ellipsis}
 .toolbar .new-tab{border:0;background:transparent;font-size:15px;padding:0 5px}
 .repo-menu,.app-menu{position:relative;flex:none}
-.repo-menu-trigger{display:flex;align-items:center;justify-content:space-between;gap:14px;background:transparent;border:0;color:#354253;font-weight:600;padding:3px 6px;min-width:86px}
-.repo-menu-trigger::after{content:'⌄';display:grid;place-items:center;width:12px;height:12px;margin-top:-2px;color:#64748a;font-size:13px;line-height:1}
-.repo-menu-trigger[aria-expanded=true]::after{transform:rotate(180deg);margin-top:2px}
+.repo-menu{width:108px}.app-menu{width:142px}
+.repo-menu-trigger{position:relative;display:flex;align-items:center;width:100%;background:transparent;border:0;color:#354253;font-weight:600;padding:3px 24px 3px 6px;text-align:left}
+.repo-menu-trigger::after{content:'⌄';position:absolute;right:6px;top:50%;display:grid;place-items:center;width:12px;height:12px;transform:translateY(-50%);color:#64748a;font-size:13px;line-height:1}
+.repo-menu-trigger[aria-expanded=true]::after{transform:translateY(-50%) rotate(180deg)}
 .repo-menu-panel{position:absolute;z-index:8;left:0;top:calc(100% + 4px);min-width:230px;width:max-content;padding:4px;background:#fff;border:1px solid #c5cbd4;border-radius:5px;box-shadow:0 6px 20px #24385526}
 .menu-command{display:flex;justify-content:space-between;align-items:center;gap:20px;width:100%;text-align:left;background:transparent;border:0;border-radius:3px;padding:5px 7px;color:#26364d}
 .menu-command:hover:not(:disabled){background:#e7eff9;color:#124c8c}
