@@ -134,7 +134,13 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
 
   return <div className="working-files">
     <div className="working-toolbar">
-      <button type="button" onClick={() => { setSelection(undefined); refresh(); }}>Обновить список</button>
+      <button className="working-mode-icon" type="button" aria-label="Обновить список" title="Обновить список"
+        onClick={() => { setSelection(undefined); refresh(); }}>
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor"
+          strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M13.5 2.5V6h-3.5M13.5 6a5.5 5.5 0 1 0 .1 3.8"/>
+        </svg>
+      </button>
       <div className="working-modes" role="group" aria-label="Режим просмотра diff">
         <button className="working-mode-icon" type="button" aria-label="В линию" title="В линию"
           aria-pressed={!split} onClick={() => setSplit(false)}>
