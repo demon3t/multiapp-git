@@ -1,10 +1,12 @@
 import React, { FormEvent, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { AssetSummary, Bridge, Change, Entry, GitState, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
+import type { AssetSummary, Bridge, Change, Entry, GitState, OpenedRepo, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
 import { BranchList } from './branch-list';
 import { GitHistory } from './git-history';
+import { WorkingTree } from './working-tree';
+import { RepositoryIcon, TabAppearanceDialog } from './tab-appearance';
 
 declare global { interface Window { mgit: Bridge } }
 const pages = ['Приложения', 'Репозитории', 'Экспорт', 'Импорт', 'История Git', 'История операций', 'Настройки'] as const;
@@ -12,7 +14,6 @@ type Page = typeof pages[number];
 const labels: Record<string, string> = { databases: 'Подключения', datasets: 'Датасеты', charts: 'Графики', dashboards: 'Дашборды', queries: 'SQL-запросы' };
 const actionNames: Record<string, string> = { add: 'Добавление', update: 'Обновление', remove: 'Удаление' };
 const repositoryName = (path: string) => path.split(/[\\/]/).at(-1);
-const icons = ['M3 5h18v5H3z M3 14h18v5H3z M7 7.5h1 M7 16.5h1', 'M5 3h13v17H5z M5 16h13 M8 7h7 M8 10h5', 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6', 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6', 'M3 12a9 9 0 1 0 3-7 M3 4v5h5 M12 7v5l3 2', 'M12 8a4 4 0 1 0 0 8 4 4 0 1 0 0-8 M12 2v3 M12 19v3 M2 12h3 M19 12h3 M5 5l2 2 M17 17l2 2 M19 5l-2 2 M7 17l-2 2'];
 const operationIcons = {
   pull: 'M5 5h14 M5 5l4-4 M5 5l4 4 M19 19H5 M19 19l-4-4 M19 19l-4 4',
   fetch: 'M12 3v14 M7 13l5 5 5-5 M4 20h16',
@@ -20,15 +21,12 @@ const operationIcons = {
   export: 'M12 16V3 M7 8l5-5 5 5 M4 14v6h16v-6',
   import: 'M12 3v13 M7 11l5 5 5-5 M4 14v6h16v-6'
 } as const;
-function Icon({ index }: { index: number }) {
-  return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"><path d={icons[index]}/></svg>;
-}
 function OperationIcon({ name }: { name: keyof typeof operationIcons }) {
   return <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={operationIcons[name]}/></svg>;
 }
 
 const emptyProfile: ProfileInput = { name: '', url: '', type: '', repo: '', auth: 'db', username: '' };
-const emptyGit: GitState = { branch: '', status: '', head: '', localBranches: [], remoteBranches: [], tags: [] };
+const emptyGit: GitState = { branch: '', status: '', head: '', localBranches: [], remoteBranches: [], tags: [], files: [] };
 const defaultFolder = 'snapshots/superset/assets';
 type MenuCommand = {
   label: string; shortcut: string; code: string; ctrl?: boolean; shift?: boolean;
@@ -70,13 +68,11 @@ function App() {
   const [profileId, setProfileId] = useState('');
   const [editor, setEditor] = useState<ProfileInput>({ ...emptyProfile });
   const [repo, setRepo] = useState('');
-  const [openedRepos, setOpenedRepos] = useState<string[]>([]);
   const [repoInput, setRepoInput] = useState('');
   const [cloning, setCloning] = useState(false);
   const [remote, setRemote] = useState('');
   const [git, setGit] = useState(emptyGit);
   const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
-  const [newBranch, setNewBranch] = useState('');
   const [folderInput, setFolderInput] = useState<string>();
   const [snapshotFolders, setSnapshotFolders] = useState<{ repo: string; ref: string; head: string; paths: string[] }>();
   const [ref, setRef] = useState('HEAD');
@@ -102,6 +98,7 @@ function App() {
   const [updateDialog, setUpdateDialog] = useState(false);
   const [repoMenu, setRepoMenu] = useState(false);
   const [appMenu, setAppMenu] = useState(false);
+  const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -199,14 +196,14 @@ function App() {
       navigate('Приложения'); setMessage('Приложение сохранено.');
     });
   }
-  function setOpened(result: { repo: string; state: GitState }) {
+  function setOpened(result: OpenedRepo) {
     if (repo !== result.repo) { setRef('HEAD'); setFolderInput(undefined); setHistoryRef(undefined); }
-    const linkedProfile = profiles.find(item => item.repo === result.repo);
-    if (linkedProfile && !profiles.some(item => item.id === profileId && item.repo === result.repo)) {
+    setProfiles(result.profiles);
+    const linkedProfile = result.profiles.find(item => item.repo === result.repo);
+    if (linkedProfile && !result.profiles.some(item => item.id === profileId && item.repo === result.repo)) {
       setProfileId(linkedProfile.id);
       setAssets([]); setSelected([]); setCompatibleOnly(false);
     }
-    setOpenedRepos(paths => paths.includes(result.repo) ? paths : [...paths, result.repo]);
     setCloning(false);
     setRepo(result.repo); setRepoInput(result.repo); setGit(result.state); setGitDiff(undefined); invalidate(); setMessage('Репозиторий открыт.');
   }
@@ -215,7 +212,7 @@ function App() {
     void run('pickDirectory', undefined, 'Выбор каталога Git', async path => {
       if (!path) return;
       await run(method, path, method === 'init' ? 'Инициализация репозитория' : 'Открытие репозитория', result => {
-        navigate('История Git');
+        navigate(result.profiles.some(item => item.repo === result.repo && item.type === 'git') ? 'Репозитории' : 'История Git');
         setOpened(result);
       });
     });
@@ -280,7 +277,7 @@ function App() {
         item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
       if (!command) return;
       event.preventDefault();
-      if (event.repeat || busy || updateDialog || command.disabled) return;
+      if (event.repeat || busy || updateDialog || appearanceTab || command.disabled) return;
       setRepoMenu(false);
       setAppMenu(false);
       command.run();
@@ -298,6 +295,8 @@ function App() {
     <datalist id="refs">{[...new Set([...git.localBranches, ...git.remoteBranches, ...git.tags])].map(name => <option key={name} value={name}/>)}</datalist>
     <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
   </div>;
+
+  const fileWorkspace = page === 'Репозитории' && !cloning && Boolean(repo) && profile?.type === 'git';
 
   return <div className="shell">
     <div className="tabbar">
@@ -360,16 +359,19 @@ function App() {
       </div>
     </div>
     {updateDialog && update && updateAvailable && <UpdateDialog key={update.latest} update={update} busy={!!busy} onClose={() => setUpdateDialog(false)}/>}
+    {appearanceTab && <TabAppearanceDialog tab={appearanceTab} onClose={() => setAppearanceTab(undefined)} save={async input => {
+      const result = await window.mgit.call('saveTabAppearance', input);
+      if (!result.ok) throw new Error(result.message);
+      setProfiles(result.data);
+      setAppearanceTab(undefined);
+    }}/>}
     <div className="toolbar">
       <div className="app-tabs" aria-label="Подключённые репозитории">
         {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId && applicationReady}
-          disabled={!!busy} onClick={() => { selectApplication(item); navigate(item.repo ? 'История Git' : 'Приложения'); }}
-          title={item.repo || item.url}><Icon index={0}/>{item.name}</button>)}
-        {openedRepos.filter(path => !profiles.some(item => item.repo === path)).map(path =>
-          <button key={path} aria-pressed={path === repo} disabled={!!busy} title={path}
-            onClick={() => { setCloning(false); showGitHistory(); if (path !== repo) void run('open', path, 'Открытие репозитория', setOpened); }}>
-            <Icon index={1}/>{repositoryName(path)}
-          </button>)}
+          disabled={!!busy} onClick={() => { setCloning(false); selectApplication(item); navigate(item.type === 'git' ? 'Репозитории' : item.repo ? 'История Git' : 'Приложения'); }}
+          style={item.color ? { ['--tab-accent' as string]: item.color } as React.CSSProperties : undefined}
+          onContextMenu={event => { event.preventDefault(); if (!busy) setAppearanceTab(item); }}
+          title={(item.repo || item.url) + '\nПравый щелчок — оформление вкладки'}><RepositoryIcon {...item}/><span>{item.name}</span></button>)}
       </div>
       <button className="new-tab" title="Добавить приложение" aria-label="Добавить приложение" disabled={!!busy} onClick={() => editApplication()}>+</button>
     </div>
@@ -401,8 +403,8 @@ function App() {
           active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
-    <main className={page === 'История Git' ? 'history-page' : undefined}>
-      {page !== 'История Git' && <header><h1>{page}</h1></header>}
+    <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
+      {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
       {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
       {message && <div role="status" className="notice success">{message}</div>}
@@ -414,11 +416,13 @@ function App() {
           <div className="section-title"><h2>Подключённые приложения</h2><button className="primary" onClick={() => editApplication()}>Добавить приложение</button></div>
           {profiles.length === 0 ? <p className="empty">Добавьте приложение и выберите папку его Git-репозитория.</p> :
             <div className="profile-list">{profiles.map(item => <div className={'profile-row ' + (item.id === profileId ? 'selected' : '')} key={item.id}>
-              <button className="profile-select" onClick={() => selectApplication(item)}><strong>{item.name}</strong><span>Apache Superset · {item.url}</span><span>{item.repo || 'Укажите папку Git'}</span></button>
-              <button onClick={() => run('probe', item.id, 'Проверка стенда', data => setMessage(
+              <button className="profile-select" onClick={() => { selectApplication(item); if (item.type === 'git') navigate('Репозитории'); }}>
+                <strong>{item.name}</strong><span>{item.type === 'git' ? 'Git-репозиторий' : 'Apache Superset · ' + item.url}</span><span>{item.repo || 'Укажите папку Git'}</span></button>
+              {item.type === 'superset' && <button onClick={() => run('probe', item.id, 'Проверка стенда', data => setMessage(
                 'Superset ' + (data.version || '· версия не определена') + '. Admin: ' + (data.admin === null ? 'роль не определена' : data.admin ? 'да' : 'нет') +
                 '. API экспорта: ' + (data.export ? 'да' : 'нет') + '. API импорта: ' + (data.import ? 'да' : 'нет') + '.'
-              ))}>Проверить</button>
+              ))}>Проверить</button>}
+              <button onClick={() => setAppearanceTab(item)}>Оформление вкладки</button>
               <button onClick={() => editApplication(item)}>Изменить</button>
             </div>)}</div>}
         </section>
@@ -429,10 +433,12 @@ function App() {
             <option value="">Добавить приложение</option>{profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</div>
         <form onSubmit={saveProfile}>
           <div className="form-grid">
-            <label>Тип приложения<select value={editor.type} required onChange={e => setEditor({ ...editor, type: e.target.value })}>
-              <option value="">Выберите тип</option><option value="superset">Apache Superset</option></select></label>
+            <label>Тип приложения<select value={editor.type} required disabled={Boolean(editor.id)} onChange={e => setEditor({ ...editor, type: e.target.value })}>
+              <option value="">Выберите тип</option><option value="git">Git-репозиторий</option><option value="superset">Apache Superset</option></select></label>
             <label>Папка Git<div className="path-input"><input value={editor.repo} required onChange={e => setEditor({ ...editor, repo: e.target.value })}/>
               <button type="button" onClick={() => run('pickDirectory', undefined, 'Выбор папки Git', value => { if (value) setEditor({ ...editor, repo: value }); })}>Выбрать</button></div></label>
+            {editor.type === 'git' && <label className="wide">Название вкладки<input value={editor.name}
+              placeholder="Имя папки" onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>}
             {editor.type === 'superset' && <>
             <label className="wide">URL Superset<input placeholder="https://superset.example.com" value={editor.url} required onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
             <label>Авторизация<select value={editor.auth} onChange={e => setEditor({ ...editor, auth: e.target.value as ProfileInput['auth'], credential: '' })}>
@@ -442,7 +448,7 @@ function App() {
               onChange={e => setEditor({ ...editor, credential: e.target.value })}/></label>
             </>}
           </div>
-          {editor.id && <details className="advanced"><summary>Дополнительные параметры Superset</summary>
+          {editor.id && editor.type === 'superset' && <details className="advanced"><summary>Дополнительные параметры Superset</summary>
           <div className="form-grid">
             <label className="wide">Название<input value={editor.name} onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>
             <label className="wide">Корпоративный CA · PEM<textarea rows={3} spellCheck={false} value={editor.ca ?? ''} onChange={e => setEditor({ ...editor, ca: e.target.value })}/></label>
@@ -461,17 +467,24 @@ function App() {
           <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button></div>
           <label className="wide">HTTPS URL для клонирования<input value={remote} placeholder="https://devops.example.com/Collection/Project/_git/Repository" onChange={e => setRemote(e.target.value)}/></label>
         </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></section>}
-        {repo && <section className="panel"><h2>Рабочее дерево</h2>
+        {repo && !cloning && <section className={fileWorkspace ? 'file-workspace-body' : 'panel'}>
+          {fileWorkspace ? <WorkingTree key={repo + '\0' + git.branch} files={git.files}
+            refresh={() => run('status', repo, 'Обновление рабочего дерева', updateGit)}
+            readPatch={(path, staged, complete) => run('workingPatch', { repo, path, staged }, 'Чтение изменений', complete)}
+            stage={(path, staged, complete) => run('stageFile', { repo, path, staged }, staged ? 'Удаление из индекса' : 'Добавление в индекс', result => {
+              updateGit(result); complete();
+            })}
+            commit={(message, complete) => run('commitStaged', { repo, message }, 'Создание коммита', result => {
+              updateGit(result); complete(); setMessage('Коммит создан.');
+            })}/> : <>
+          <h2>Рабочее дерево</h2>
           <p className="hint" title={repo}>{repo}</p>
           <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>
           <pre className="readout">{git.status || 'Рабочее дерево чистое.'}</pre>
           <div className="actions"><button onClick={() => run('diff', repo, 'Чтение Git diff', setGitDiff)}>Показать Git diff</button></div>
           {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
             <details open><summary>Рабочее дерево</summary><pre>{gitDiff.unstaged || '—'}</pre></details></div>}
-          <div className="actions"><input aria-label="Имя ветки" value={newBranch} onChange={e => setNewBranch(e.target.value)} list="branches" placeholder="Имя локальной ветки"/>
-            <datalist id="branches">{git.localBranches.map(branch => <option key={branch} value={branch}/>)}</datalist>
-            <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: false }, 'Переключение ветки', updateGit)}>Переключить</button>
-            <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
+          </>}
         </section>}
       </>}
       {page === 'Экспорт' && <>{contextPanel}<section className="panel">

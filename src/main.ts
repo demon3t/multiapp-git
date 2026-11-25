@@ -2,16 +2,18 @@ import { app, BrowserWindow, dialog, ipcMain, net, safeStorage, shell } from 'el
 import { randomUUID } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { Failure, Profile, profileUrl, Secret, uuidPattern } from './core/model';
-import { Bridge, Context, Entry, ProfileInput, Requests } from './core/public';
+import { Bridge, Context, Entry, ProfileInput, Requests, TabAppearance, tabIcons } from './core/public';
 import * as git from './core/git';
 import { Superset } from './core/superset';
 import { prepareSnapshot, summarize } from './core/snapshot';
 import { applyImport, confirmation, exportSnapshot, planImport, sourceSnapshot, verifyImport } from './core/workflow';
 import { checkRelease, downloadInstaller, releaseChanges, releasesPage, UpdateStatus } from './core/updates';
 
-type Stored = { profile: Profile; encrypted: string; type?: 'superset'; repo?: string };
+type StoredSuperset = { profile: Profile & TabAppearance; encrypted: string; type?: 'superset'; repo?: string };
+type StoredGit = { profile: { id: string } & TabAppearance; type: 'git'; repo: string };
+type Stored = StoredGit | StoredSuperset;
 type State = { profiles: Stored[]; history: Entry[]; updates?: { automatic: boolean; autoInstall?: boolean } };
 let state: State;
 let window: BrowserWindow;
@@ -104,20 +106,24 @@ async function persist(next: State) {
     await fs.rm(temporary, { force: true }).catch(() => undefined);
   }
 }
-function unlock(value: Stored): Secret {
+function unlock(value: StoredSuperset): Secret {
   if (!safeStorage.isEncryptionAvailable()) throw new Failure('Системное защищённое хранилище недоступно.', 'storage');
   try { return JSON.parse(safeStorage.decryptString(Buffer.from(value.encrypted, 'base64'))); }
   catch { throw new Failure('Защищённые настройки нельзя прочитать. Сохраните профиль заново.', 'storage'); }
 }
 function listProfiles() {
-  return state.profiles.map(({ profile, ...item }) => ({
-    id: profile.id, name: profile.name, url: profile.url, auth: profile.auth, username: profile.username, ca: profile.ca,
-    type: item.type ?? 'superset', repo: item.repo ?? '', mappingIds: Object.keys(unlock({ profile, ...item }).connections)
-  }));
+  return state.profiles.map(item => {
+    const { id, name, icon, color } = item.profile;
+    if (item.type === 'git') return { id, name, icon, color, url: '', auth: 'db' as const, type: item.type, repo: item.repo, mappingIds: [] };
+    const { url, auth, username, ca } = item.profile;
+    let mappingIds: string[] = [];
+    try { mappingIds = Object.keys(unlock(item).connections); } catch { /* Opening Git does not require Superset credentials. */ }
+    return { id, name, icon, color, url, auth, username, ca, type: item.type ?? 'superset', repo: item.repo ?? '', mappingIds };
+  });
 }
 function profileFor(id: string) {
   const item = state.profiles.find(item => item.profile.id === id);
-  if (!item) throw new Failure('Выберите профиль Superset.');
+  if (!item || item.type === 'git') throw new Failure('Выберите профиль Superset.');
   const secret = unlock(item);
   return { profile: item.profile, secret, adapter: new Superset(item.profile, secret) };
 }
@@ -127,7 +133,19 @@ function applicationRepo(input: Context) {
   return repo;
 }
 async function save(input: ProfileInput) {
-  const old = state.profiles.find(item => item.profile.id === input.id);
+  const existing = state.profiles.find(item => item.profile.id === input.id);
+  if (input.type === 'git') {
+    if (!input.repo?.trim()) throw new Failure('Укажите папку Git.');
+    const repo = await git.openRepoRoot(input.repo.trim());
+    const entry = existing ?? state.profiles.find(item => item.type === 'git' && item.repo === repo);
+    const profile = { id: entry?.profile.id ?? randomUUID(), name: input.name?.trim() || basename(repo),
+      icon: entry?.profile.icon, color: entry?.profile.color };
+    await persist({ ...state, profiles: [...state.profiles.filter(item => item !== entry), { profile, type: 'git', repo }] });
+    preparedImport = undefined;
+    preparedExport = undefined;
+    return listProfiles();
+  }
+  const old = existing?.type === 'git' ? undefined : existing;
   if (input.type !== 'superset' || !input.repo?.trim() || !['db', 'token'].includes(input.auth)) {
     throw new Failure('Укажите тип приложения, папку Git и способ входа.');
   }
@@ -135,7 +153,8 @@ async function save(input: ProfileInput) {
   if (input.ca && (!input.ca.includes('-----BEGIN CERTIFICATE-----') || /PRIVATE KEY/.test(input.ca))) throw new Failure('Корпоративный CA должен быть сертификатом PEM.');
   const url = profileUrl(input.url);
   const repo = await git.openRepoRoot(input.repo.trim());
-  const profile: Profile = { id: old?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
+  const profile: StoredSuperset['profile'] = { id: existing?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
+    icon: existing?.profile.icon, color: existing?.profile.color,
     auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
   let secret: Secret = { credential: '', connections: {} };
   const sameTarget = old?.profile.url === profile.url;
@@ -165,13 +184,38 @@ async function save(input: ProfileInput) {
   preparedExport = undefined;
   return listProfiles();
 }
+async function openWorkspace(repo: string) {
+  const status = await git.gitStatus(repo);
+  if (!state.profiles.some(item => item.repo === repo)) {
+    const item: StoredGit = { type: 'git', repo, profile: { id: randomUUID(), name: basename(repo) } };
+    await persist({ ...state, profiles: [...state.profiles, item] });
+  }
+  return { repo, state: status, profiles: listProfiles() };
+}
 const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][1] | Promise<Requests[K][1]> } = {
   profiles: listProfiles, save, probe: id => profileFor(id).adapter.probe(),
+  async saveTabAppearance(input) {
+    const item = state.profiles.find(item => item.profile.id === input.id);
+    const name = input.name?.trim();
+    if (!item || !name || name.length > 80 || /[\r\n\0]/.test(name) ||
+      (input.icon !== undefined && !tabIcons.includes(input.icon)) ||
+      (input.color !== undefined && !/^#[0-9a-f]{6}$/i.test(input.color))) {
+      throw new Failure('Проверьте название, значок и цвет вкладки.');
+    }
+    const updated = structuredClone(item);
+    Object.assign(updated.profile, { name, icon: input.icon, color: input.color });
+    const profiles = state.profiles.map(profile => profile === item ? updated : profile);
+    await persist({ ...state, profiles });
+    return listProfiles();
+  },
   async pickDirectory() { return (await dialog.showOpenDialog(window, { properties: ['openDirectory', 'createDirectory'] })).filePaths[0] ?? ''; },
-  async open(path) { const repo = await git.openRepoRoot(path); return { repo, state: await git.gitStatus(repo) }; },
-  async init(path) { const repo = await git.initRepo(path); return { repo, state: await git.gitStatus(repo) }; },
-  async clone(input) { const repo = await git.cloneRepo(input.url, input.path); return { repo, state: await git.gitStatus(repo) }; },
+  async open(path) { return openWorkspace(await git.openRepoRoot(path)); },
+  async init(path) { return openWorkspace(await git.initRepo(path)); },
+  async clone(input) { return openWorkspace(await git.cloneRepo(input.url, input.path)); },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
+  workingPatch: input => git.workingPatch(input.repo, input.path, input.staged),
+  stageFile: input => git.stageFile(input.repo, input.path, input.staged),
+  commitStaged: input => git.commitStaged(input.repo, input.message),
   gitLog: input => git.gitLog(input.repo, input.ref, input.offset),
   commitFiles: input => git.commitFiles(input.repo, input.sha),
   commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),
@@ -267,7 +311,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   openReleases: () => shell.openExternal(releasesPage)
 };
-const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
+const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',

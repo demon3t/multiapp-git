@@ -7,11 +7,17 @@ export type UpdateView = Omit<UpdateStatus, 'asset' | 'tag' | 'notes'> & { autom
 export type GitState = {
   branch: string; status: string; head: string;
   localBranches: string[]; remoteBranches: string[]; tags: string[];
+  files: WorkingFile[];
 };
+export type WorkingFile = { path: string; previousPath?: string; index: string; worktree: string };
 export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
 export type GitCommitFile = { status: string; path: string; previousPath?: string };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
-export type ProfileSummary = ProfileInput & { id: string; mappingIds: string[] };
+export const tabIcons = ['repository', 'server', 'folder', 'branch', 'code', 'star'] as const;
+export type TabIcon = typeof tabIcons[number];
+export type TabAppearance = { name: string; icon?: TabIcon; color?: string };
+export type ProfileSummary = ProfileInput & TabAppearance & { id: string; mappingIds: string[] };
+export type OpenedRepo = { repo: string; state: GitState; profiles: ProfileSummary[] };
 export type Context = { repo: string; folder: string; profileId: string };
 export type AssetSummary = { uuid: string; name: string; kind: string; path: string; action?: string };
 export type Entry = { time: string; action: string; status: 'ok' | 'error'; message: string };
@@ -21,13 +27,17 @@ export type Verification = { verified: boolean; checked: number; issues: unknown
 export type Requests = {
   profiles: [undefined, ProfileSummary[]];
   save: [ProfileInput, ProfileSummary[]];
+  saveTabAppearance: [TabAppearance & { id: string }, ProfileSummary[]];
   probe: [string, { version: string; apiVersion: string; admin: boolean | null; export: boolean; import: boolean }];
   pickDirectory: [undefined, string];
-  open: [string, { repo: string; state: GitState }];
-  init: [string, { repo: string; state: GitState }];
-  clone: [{ url: string; path: string }, { repo: string; state: GitState }];
+  open: [string, OpenedRepo];
+  init: [string, OpenedRepo];
+  clone: [{ url: string; path: string }, OpenedRepo];
   status: [string, GitState];
   diff: [string, { staged: string; unstaged: string }];
+  workingPatch: [{ repo: string; path: string; staged: boolean }, string];
+  stageFile: [{ repo: string; path: string; staged: boolean }, GitState];
+  commitStaged: [{ repo: string; message: string }, GitState];
   gitLog: [{ repo: string; ref?: string; offset: number }, { commits: GitCommit[]; more: boolean }];
   commitFiles: [{ repo: string; sha: string }, { message: string; files: GitCommitFile[] }];
   commitPatch: [{ repo: string; sha: string; paths: string[] }, string];
