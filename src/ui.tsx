@@ -370,6 +370,7 @@ function App() {
       <div className="app-tabs" aria-label="Подключённые репозитории">
         {profiles.map(item => <button key={item.id} aria-pressed={item.id === profileId && applicationReady}
           disabled={!!busy} onClick={() => { setCloning(false); selectApplication(item); navigate(item.type === 'git' ? 'Репозитории' : item.repo ? 'История Git' : 'Приложения'); }}
+          style={item.color ? { ['--tab-accent' as string]: item.color } as React.CSSProperties : undefined}
           onContextMenu={event => { event.preventDefault(); if (!busy) setAppearanceTab(item); }}
           title={(item.repo || item.url) + '\nПравый щелчок — оформление вкладки'}><RepositoryIcon {...item}/><span>{item.name}</span></button>)}
       </div>
