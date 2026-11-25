@@ -256,3 +256,26 @@ main{background:#f6f8fb}
 .working-files>.actions input{background:#fff;border-color:#cbd6e2}
 .working-files>.actions .primary{box-shadow:0 1px 2px #185a9828}
 .statusbar{background:#e9eef4;border-top-color:#c8d2de;color:#506176}
+
+/* Borderless action controls */
+button{border:0;background:#e7eef7;color:#285276;box-shadow:none}
+button:hover:not(:disabled){filter:none;background:#d9e8f6;color:#194e7d}
+button:active:not(:disabled){background:#c9ddef}
+button.primary,.primary{background:#2f73bb;color:#fff;box-shadow:0 1px 2px #1c4f7b33}
+button.primary:hover:not(:disabled),.primary:hover:not(:disabled){background:#2866a7;color:#fff}
+button.danger,.danger{background:#c44d68;color:#fff}
+.repo-menu-trigger,.toolbar .new-tab,.menu-command,.updates-toggle{background:transparent;color:#354253}
+.repo-menu-trigger:hover:not(:disabled),.toolbar .new-tab:hover:not(:disabled),.menu-command:hover:not(:disabled),.updates-toggle:hover:not(:disabled){background:#dce9f6;color:#1e5889}
+.app-tabs button{border:0;background:transparent}
+.app-tabs button:hover:not(:disabled){background:#e1ebf5}
+.app-tabs button[aria-pressed=true]{background:#fff;box-shadow:0 -1px 0 #fff inset,0 1px 0 #c8d3e1}
+.operation,.branch-ref,.branches summary,.repo-views button{border:0}
+.operation:hover:not(:disabled){background:#dcebf8;color:#185a91;box-shadow:none}
+.branch-ref:hover:not(:disabled),.branch-ref[aria-current=true]{background:#e1edf9;box-shadow:inset 2px 0 #3478c5}
+.repo-views button[aria-pressed=true],.repo-views button:hover:not(:disabled){background:#dce9f6;color:#195b95}
+.working-modes button{background:#e6eef7;color:#4c6075}
+.working-modes button:hover:not(:disabled),.working-modes button[aria-pressed=true]{background:#cfe2f4;color:#18588d;box-shadow:none}
+.working-toolbar>button,.working-diff-header button[data-stage]{background:#e2edf8;color:#285d8a}
+.working-toolbar>button:hover:not(:disabled),.working-diff-header button[data-stage]:hover:not(:disabled){background:#cfe2f4;color:#18588d}
+.tab-icon-options button,.tab-color-options button{background:#e5edf6;color:#315979}
+.tab-icon-options button[aria-pressed=true]{background:#c7dff3;color:#195a90}
