@@ -282,3 +282,11 @@ button.danger,.danger{background:#c44d68;color:#fff}
 .working-toolbar>button:hover:not(:disabled),.working-diff-header button[data-stage]:hover:not(:disabled){background:#cfe2f4;color:#18588d}
 .tab-icon-options button,.tab-color-options button{background:#e5edf6;color:#315979}
 .tab-icon-options button[aria-pressed=true]{background:#c7dff3;color:#195a90}
+
+.app-tabs button[aria-pressed=true],
+.repo-views button[aria-pressed=true],
+.branches .branch-ref[aria-current=true],
+.working-file-name[aria-pressed=true],
+.commit-row[aria-pressed=true],
+.commit-files button[aria-pressed=true],
+.diff-files .active{font-weight:700}
