@@ -1,4 +1,4 @@
-import React, { FormEvent, useEffect, useState } from 'react';
+import React, { FormEvent, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AssetSummary, Bridge, Change, Entry, GitState, OpenedRepo, Plan, Preview, ProfileInput, ProfileSummary, Requests, UpdateView } from './core/public';
 import './ui.css';
@@ -6,7 +6,8 @@ import { UpdateDialog } from './update-dialog';
 import { UpdateNotification } from './update-notification';
 import { BranchList } from './branch-list';
 import { BranchDialog, BranchMenu, type BranchCommand, type BranchMenuTarget, type EditAction } from './branch-menu';
-import type { BranchAction } from './core/public';
+import type { BranchAction, CommitAction, CommitCommand, GitCommit } from './core/public';
+import { CommitActionDialog, CommitMenu, commitLabels, type CommitEdit, type CommitMenuTarget } from './commit-menu';
 import { GitHistory } from './git-history';
 import { WorkingTree } from './working-tree';
 import { RepositoryIcon, TabAppearanceDialog } from './tab-appearance';
@@ -106,6 +107,10 @@ function App() {
   const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
   const [branchMenu, setBranchMenu] = useState<BranchMenuTarget>();
   const [branchDialog, setBranchDialog] = useState<{ ref: string; action: EditAction; current: string; head: string }>();
+  const [commitMenu, setCommitMenu] = useState<CommitMenuTarget>();
+  const [commitAction, setCommitAction] = useState<{ commit: GitCommit; action: CommitEdit; state: GitState }>();
+  const [commitComparison, setCommitComparison] = useState<{ sha: string; patch: string }>();
+  const comparisonDialog = useRef<HTMLDialogElement>(null);
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -113,6 +118,7 @@ function App() {
   const folder = folderInput ?? (paths.length === 1 ? paths[0] : defaultFolder);
   const context = { repo, folder, profileId };
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
+  useEffect(() => { if (commitComparison) comparisonDialog.current?.showModal(); }, [commitComparison]);
 
   useEffect(() => {
     if (!message) return;
@@ -292,6 +298,24 @@ function App() {
     else if (command === 'copy') void run('copyBranchName', { repo, ref }, 'Копирование имени ветки');
     else setBranchDialog({ ref, action: command, current: git.branch, head: git.head });
   }
+  function chooseCommitCommand(command: CommitCommand) {
+    if (!commitMenu) return;
+    const { commit } = commitMenu;
+    setCommitMenu(undefined);
+    const input = { repo, sha: commit.sha };
+    if (command === 'compare') void run('compareCommit', input, 'Сравнение с рабочей папкой', patch => setCommitComparison({ sha: commit.sha, patch }));
+    else if (command === 'patch') void run('saveCommitPatch', input, 'Сохранение патча', saved => { if (saved) setMessage('Патч сохранён.'); });
+    else if (command === 'copy-sha' || command === 'copy-info') void run('copyCommit', { ...input, full: command === 'copy-info' },
+      'Копирование коммита', () => setMessage(command === 'copy-info' ? 'Сведения о коммите скопированы.' : 'SHA коммита скопирован.'));
+    else setCommitAction({ commit, action: command, state: git });
+  }
+  function applyCommitAction(input: CommitAction) {
+    setCommitAction(undefined);
+    void run('commitAction', { repo, ...input }, commitLabels[input.action].replace(/…$/, ''), result => {
+      updateGit(result);
+      setMessage('Операция с коммитом выполнена.');
+    });
+  }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
@@ -340,7 +364,7 @@ function App() {
         item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
       if (!command) return;
       event.preventDefault();
-      if (event.repeat || busy || updateDialog || appearanceTab || branchDialog || branchMenu || command.disabled) return;
+      if (event.repeat || busy || updateDialog || appearanceTab || branchDialog || branchMenu || commitMenu || commitAction || commitComparison || command.disabled) return;
       setRepoMenu(false);
       setAppMenu(false);
       command.run();
@@ -480,11 +504,24 @@ function App() {
     {branchMenu && <BranchMenu target={branchMenu} current={git.branch} head={git.head} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
     {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action} current={branchDialog.current} head={branchDialog.head}
       onClose={() => setBranchDialog(undefined)} onSubmit={changeSelectedBranch}/>}
+    {commitMenu && <CommitMenu target={commitMenu} state={git} onClose={() => setCommitMenu(undefined)} onCommand={chooseCommitCommand}
+      onBranch={ref => { setBranchMenu({ ref, anchor: commitMenu.anchor }); setCommitMenu(undefined); }}/>}
+    {commitAction && <CommitActionDialog {...commitAction} onClose={() => setCommitAction(undefined)} onSubmit={applyCommitAction}/>}
+    {commitComparison && <dialog ref={comparisonDialog} className="update-dialog commit-comparison-dialog" aria-labelledby="commit-comparison-title"
+      onCancel={event => { event.preventDefault(); setCommitComparison(undefined); }}>
+      <h2 id="commit-comparison-title">Рабочая папка и коммит {commitComparison.sha.slice(0, 8)}</h2>
+      <pre tabIndex={0}>{commitComparison.patch ? commitComparison.patch.slice(0, 250_000).split('\n').map((line, index) =>
+        <span key={index} className={line.startsWith('@@') ? 'patch-hunk' : line.startsWith('+') && !line.startsWith('+++ ') ? 'patch-added'
+          : line.startsWith('-') && !line.startsWith('--- ') ? 'patch-removed' : undefined}>{line || ' '}</span>) : 'Различий нет.'}
+        {commitComparison.patch.length > 250_000 && '… Показано начало diff.'}</pre>
+      <div className="update-dialog-actions"><button type="button" onClick={() => setCommitComparison(undefined)}>Закрыть</button></div>
+    </dialog>}
     {!showUpdateDialog && notifications}
     <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
       {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
       <fieldset disabled={Boolean(busy)}>
-      {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}/>
+      {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}
+        onMenu={target => { setBranchMenu(undefined); setCommitMenu(target); }}/>
         : <p className="empty">Откройте репозиторий, чтобы увидеть историю Git.</p>)}
       {page === 'Приложения' && <>
         <section className="panel">

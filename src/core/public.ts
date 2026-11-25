@@ -15,6 +15,12 @@ export type BranchAction = { ref: string } & (
   | { action: 'merge' | 'rebase'; current: string; head: string }
 );
 export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
+export type CommitCommand = 'create' | 'tag' | 'checkout' | 'cherry-pick' | 'revert' | 'reset' | 'rebase' | 'patch' | 'compare' | 'copy-sha' | 'copy-info';
+export type CommitAction = { sha: string; current: string; head: string } & (
+  { action: 'create' | 'tag'; name: string } | { action: 'checkout' | 'rebase' }
+  | { action: 'cherry-pick' | 'revert'; parent?: number }
+  | { action: 'reset'; mode: 'soft' | 'mixed' | 'hard' }
+);
 export type GitCommitFile = { status: string; path: string; previousPath?: string };
 export type ProfileInput = Omit<Profile, 'id' | 'environment'> & { id?: string; type: string; repo: string; credential?: string; mappings?: string; clearMappings?: boolean };
 export const tabIcons = ['repository', 'server', 'folder', 'branch', 'code', 'star'] as const;
@@ -45,6 +51,10 @@ export type Requests = {
   gitLog: [{ repo: string; ref?: string; offset: number }, { commits: GitCommit[]; more: boolean }];
   commitFiles: [{ repo: string; sha: string }, { message: string; files: GitCommitFile[] }];
   commitPatch: [{ repo: string; sha: string; paths: string[] }, string];
+  commitAction: [CommitAction & { repo: string }, GitState];
+  compareCommit: [{ repo: string; sha: string }, string];
+  saveCommitPatch: [{ repo: string; sha: string }, boolean];
+  copyCommit: [{ repo: string; sha: string; full: boolean }, void];
   branch: [{ repo: string; branch: string; create: boolean }, GitState];
   branchAction: [BranchAction & { repo: string }, GitState];
   copyBranchName: [{ repo: string; ref: string }, void];

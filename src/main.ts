@@ -227,6 +227,21 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   gitLog: input => git.gitLog(input.repo, input.ref, input.offset),
   commitFiles: input => git.commitFiles(input.repo, input.sha),
   commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),
+  commitAction: input => git.commitAction(input.repo, input),
+  compareCommit: input => git.compareCommit(input.repo, input.sha),
+  async saveCommitPatch({ repo, sha }) {
+    const patch = await git.saveCommitPatch(repo, sha);
+    if (!patch.length) throw new Failure('В коммите нет изменений для сохранения.');
+    const result = await dialog.showSaveDialog(window, {
+      defaultPath: sha.slice(0, 12) + '.patch', filters: [{ name: 'Git patch', extensions: ['patch'] }]
+    });
+    if (result.canceled || !result.filePath) return false;
+    await fs.writeFile(result.filePath, patch);
+    return true;
+  },
+  async copyCommit({ repo, sha, full }) {
+    clipboard.writeText(await git.copyCommitText(repo, sha, full));
+  },
   fetch: git.fetchRemote, pull: git.pullBranch, push: git.pushBranch,
   async inventory(id) {
     return (await exportSnapshot(profileFor(id).adapter)).assets;
@@ -321,6 +336,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
 };
 const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases', 'copyBranchName']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
+  commitAction: 'Операция с коммитом', saveCommitPatch: 'Сохранение патча',
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
   branch: 'Ветка выбрана', branchAction: 'Операция с веткой', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
   exportPreview: 'Предпросмотр экспорта готов', write: 'Каталог снимка проверен и записан', commit: 'Коммит создан',

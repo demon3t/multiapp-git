@@ -311,3 +311,9 @@ button.danger,.danger{background:#c44d68;color:#fff}
 .branch-menu .menu-command>span{overflow:hidden;text-overflow:ellipsis}
 .branch-menu .menu-separator{margin:2px -3px}
 .branch-dialog form{margin-top:12px}
+.commit-action-dialog form{margin-top:12px}
+.commit-action-dialog form>label{display:grid;gap:5px;margin:10px 0;color:#34465d;font-size:12px}
+.commit-action-dialog form>label input,.commit-action-dialog form>label select{min-width:260px}
+.commit-comparison-dialog{width:min(900px,calc(100vw - 32px));max-width:none}
+.commit-comparison-dialog>pre{max-height:min(65vh,620px);overflow:auto;margin:12px 0;padding:10px;background:#f7f9fc;border:1px solid #d5dee9;white-space:pre;font:12px/1.55 "Cascadia Mono","Consolas",monospace}
+.commit-comparison-dialog>pre>span,.commit-patch pre>span{display:block;min-height:1.55em}

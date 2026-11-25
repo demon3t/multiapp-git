@@ -233,6 +233,16 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert(await evaluate('(() => { const lines = document.querySelectorAll(".commit-patch pre span"); return lines[1].offsetTop > lines[0].offsetTop; })()'));
   await evaluate('document.querySelector(".commit-tabs button:first-child").click()');
   assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
+  await evaluate('document.querySelector(".commit-row").dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, cancelable: true, clientX: 420, clientY: 180}))');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-menu button"), item => item.getAttribute("aria-label"))'),
+    ['main  ›', 'origin/main  ›', 'origin/HEAD  ›', 'Создать ветку…', 'Создать тег…', 'Rebase «main» на этот коммит…', 'Сбросить «main» до коммита…',
+      'Переключиться на коммит…', 'Cherry-pick коммита…', 'Отменить коммит (Revert)…', 'Сохранить как патч…',
+      'Сравнить с рабочей папкой', 'Копировать SHA коммита', 'Копировать сведения о коммите']);
+  if (process.env.MGIT_TEST_COMMIT_MENU_SCREENSHOT) {
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_COMMIT_MENU_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  await evaluate('document.querySelector(".branch-menu").dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))');
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
   assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
 

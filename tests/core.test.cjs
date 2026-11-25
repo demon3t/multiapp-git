@@ -62,6 +62,48 @@ test('merges and rebases the active branch and rolls back conflicts', async t =>
   assert.equal(run('rev-parse', 'source'), upstream);
 });
 
+test('performs commit menu actions against the selected commit', async t => {
+  const repo = await mkdtemp(join(tmpdir(), 'mgit-commit-actions-'));
+  t.after(() => rm(repo, { recursive: true, force: true }));
+  const run = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  run('init', '-b', 'main');
+  run('config', 'user.name', 'mGit test');
+  run('config', 'user.email', 'test@example.invalid');
+  async function commit(file, contents, message = contents) {
+    await writeFile(join(repo, file), contents + '\n');
+    run('add', '--', file);
+    run('commit', '-m', message);
+    return run('rev-parse', 'HEAD');
+  }
+  const base = await commit('base.txt', 'base');
+  run('switch', '-c', 'feature');
+  const feature = await commit('feature.txt', 'feature');
+  run('switch', 'main');
+  const main = await commit('main.txt', 'main');
+  const state = () => git.gitStatus(repo);
+  let current = await state();
+  assert.equal((await git.commitAction(repo, { action: 'create', sha: feature, current: current.branch, head: current.head, name: 'from-commit' })).localBranches.includes('from-commit'), true);
+  current = await state();
+  assert.equal((await git.commitAction(repo, { action: 'tag', sha: feature, current: current.branch, head: current.head, name: 'v-from-commit' })).tags.includes('v-from-commit'), true);
+  current = await state();
+  await git.commitAction(repo, { action: 'cherry-pick', sha: feature, current: current.branch, head: current.head });
+  assert.equal(run('cat-file', '-e', 'HEAD:feature.txt'), '');
+  current = await state();
+  await git.commitAction(repo, { action: 'revert', sha: main, current: current.branch, head: current.head });
+  assert.throws(() => run('cat-file', '-e', 'HEAD:main.txt'));
+  assert.match(await git.compareCommit(repo, base), /main\.txt|feature\.txt/);
+  assert.match((await git.saveCommitPatch(repo, feature)).toString('utf8'), /feature\.txt/);
+  current = await state();
+  await git.commitAction(repo, { action: 'checkout', sha: base, current: current.branch, head: current.head });
+  assert.equal((await state()).branch, '');
+  current = await state();
+  await git.commitAction(repo, { action: 'checkout', sha: main, current: current.branch, head: current.head });
+  run('switch', 'main');
+  current = await state();
+  await git.commitAction(repo, { action: 'reset', sha: base, current: current.branch, head: current.head, mode: 'mixed' });
+  assert.equal((await state()).head, base);
+});
+
 test('validates UUID, layout and required dataset', () => {
   const files = fixture();
   assert.equal(assertValid(files).length, 5);

@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
 import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
-import type { BranchAction, GitCommit, GitCommitFile, WorkingFile } from './public';
+import type { BranchAction, CommitAction, GitCommit, GitCommitFile, WorkingFile } from './public';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -225,6 +225,60 @@ export async function commitPatch(repo: string, sha: string, paths: string[]) {
   const { flags, revisions } = await commitDiffArgs(repo, sha);
   return (await git(repo, ['--literal-pathspecs', ...flags, '-p', ...revisions, '--', ...paths])).toString('utf8');
 }
+export async function saveCommitPatch(repo: string, sha: string) {
+  const { flags, revisions } = await commitDiffArgs(repo, sha);
+  return git(repo, [...flags, '-p', '--binary', '--full-index', ...revisions, '--']);
+}
+
+export async function compareCommit(repo: string, sha: string) {
+  const target = await resolveCommitSelection(repo, sha);
+  return command(repo, ['diff', '--no-ext-diff', '--no-textconv', '--no-color', target, '--']);
+}
+
+async function resolveCommitSelection(repo: string, sha: string) {
+  if (!commitSha.test(sha)) throw new Failure('Укажите полный SHA коммита.');
+  return resolveCommit(repo, sha);
+}
+
+export async function copyCommitText(repo: string, sha: string, full: boolean) {
+  const target = await resolveCommitSelection(repo, sha);
+  return full ? command(repo, ['show', '-s', '--no-notes', '--no-show-signature', '--format=fuller', target, '--']) : target;
+}
+
+export async function commitAction(repo: string, input: CommitAction) {
+  const target = await resolveCommitSelection(repo, input.sha);
+  const { action } = input;
+  if (action === 'create' || action === 'tag') {
+    if (!input.name || input.name.startsWith('-') || input.name.startsWith('@{')) throw new Failure('Укажите допустимое имя.');
+    if (action === 'create') {
+      await git(repo, ['check-ref-format', '--branch', input.name]);
+      await git(repo, ['branch', '--', input.name, target]);
+    } else await git(repo, ['tag', '--', input.name, target]);
+    return gitStatus(repo);
+  }
+  const state = await gitStatus(repo);
+  if (!state.head || state.head !== input.head || state.branch !== input.current) {
+    throw new Failure('Текущая ветка или HEAD изменились. Откройте меню коммита заново.', 'git');
+  }
+  const paths = await ensureNoGitOperation(repo);
+  if (action === 'reset') {
+    if (!state.branch || !['soft', 'mixed', 'hard'].includes(input.mode)) throw new Failure('Выберите ветку и режим сброса.');
+    await git(repo, ['reset', '--' + input.mode, target]);
+  } else if (action === 'checkout') {
+    await git(repo, ['switch', '--detach', target]);
+  } else if (action === 'cherry-pick' || action === 'revert' || action === 'rebase') {
+    if (!state.branch || state.status) throw new Failure('Переключитесь на локальную ветку и сохраните изменения в рабочем дереве.', 'dirty');
+    const parents = (await command(repo, ['show', '-s', '--format=%P', target, '--'])).split(' ').filter(Boolean);
+    const parent = input.action === 'cherry-pick' || input.action === 'revert' ? input.parent : undefined;
+    if (action !== 'rebase' && parents.length > 1 && (!parent || !Number.isInteger(parent) || parent > parents.length || parent < 1)) {
+      throw new Failure('Выберите родителя коммита слияния.');
+    }
+    const args = action === 'rebase' ? ['rebase', '--no-autostash', '--no-update-refs', target]
+      : [action, '--no-edit', ...(parents.length > 1 ? ['-m', String(parent)] : []), target];
+    await runWithAbort(repo, args, paths);
+  } else throw new Failure('Неизвестное действие с коммитом.');
+  return gitStatus(repo);
+}
 async function assertClean(repo: string) {
   const status = await gitStatus(repo);
   if (status.status) throw new Failure('Рабочее дерево содержит изменения. Сохраните их перед операцией.', 'dirty');
@@ -283,26 +337,39 @@ async function integrateBranch(repo: string, input: Extract<BranchAction, { acti
   }
   if (ref === 'refs/heads/' + state.branch) throw new Failure('Выберите другую ветку.', 'git');
   if (state.status) throw new Failure('Сохраните изменения в рабочем дереве перед слиянием или rebase.', 'dirty');
+  const paths = await ensureNoGitOperation(repo);
+  const target = await resolveCommit(repo, ref);
+  await runWithAbort(repo, action === 'merge' ? ['merge', '--no-edit', target] : ['rebase', '--no-autostash', '--no-update-refs', target], paths);
+}
+
+async function gitPathExists(repo: string, path: string) {
+  try { await fs.stat(resolve(repo, path)); return true; }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
+async function ensureNoGitOperation(repo: string) {
   const markers = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer'];
   const paths = (await command(repo, ['rev-parse', ...markers.flatMap(marker => ['--git-path', marker])])).split(/\r?\n/);
-  async function exists(path: string) {
-    try { await fs.stat(resolve(repo, path)); return true; }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
-      throw error;
-    }
+  if ((await Promise.all(paths.map(path => gitPathExists(repo, path)))).some(Boolean)) {
+    throw new Failure('Завершите текущую операцию Git перед продолжением.', 'git');
   }
-  if ((await Promise.all(paths.map(exists))).some(Boolean)) throw new Failure('Завершите текущую операцию Git перед продолжением.', 'git');
-  const target = await resolveCommit(repo, ref);
+  return paths;
+}
+
+async function runWithAbort(repo: string, args: string[], paths: string[]) {
+  const [action] = args;
   try {
-    await git(repo, action === 'merge' ? ['merge', '--no-edit', target] : ['rebase', '--no-autostash', '--no-update-refs', target]);
+    await git(repo, args);
   } catch (error) {
-    const operationPaths = action === 'merge' ? paths.slice(0, 1) : paths.slice(1, 3);
-    if (!(await Promise.all(operationPaths.map(exists))).some(Boolean)) throw error;
+    const operationPaths = action === 'merge' ? paths.slice(0, 1) : action === 'rebase' ? paths.slice(1, 3)
+      : [paths[action === 'cherry-pick' ? 3 : 4], paths[5]];
+    if (!(await Promise.all(operationPaths.map(path => gitPathExists(repo, path)))).some(Boolean)) throw error;
     try { await git(repo, [action, '--abort']); }
     catch { throw new Failure('Git не смог отменить операцию. Проверьте рабочее дерево и завершите или отмените операцию в Git.', 'git'); }
-    throw new Failure(action === 'merge' ? 'Слияние остановлено. Git восстановил исходное состояние.'
-      : 'Rebase остановлен. Git восстановил исходное состояние.', 'git');
+    throw new Failure('Операция остановлена. Git восстановил исходное состояние.', 'git');
   }
 }
 export async function fetchRemote(repo: string) {
