@@ -234,6 +234,7 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   const fileButton = 'document.querySelector(' + JSON.stringify(file) + ')';
   for (let attempt = 0; attempt < 50 && !(await evaluate('!!' + fileButton + ' && !' + fileButton + '.matches(":disabled")')); attempt++) await wait(100);
   assert.equal(await evaluate('!!' + fileButton), true, await evaluate('document.querySelector("main")?.innerText'));
+  assert.equal(await evaluate('document.querySelector("main").classList.contains("file-workspace") && !document.querySelector("main h1, main h2, .file-workspace-body > p")'), true);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".working-file-tree summary"), node => node.textContent)'), ['docs', 'drafts']);
   assert.equal(await evaluate('document.querySelectorAll(".working-file-tree .working-file-name").length'), 2);
   assert.doesNotMatch(await evaluate('document.querySelector(".working-files").innerText'), /Изменённые файлы|В индексе/);

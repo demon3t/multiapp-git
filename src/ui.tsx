@@ -299,6 +299,8 @@ function App() {
     <datalist id="snapshot-folders">{paths.map(path => <option key={path} value={path}/>)}</datalist>
   </div>;
 
+  const fileWorkspace = page === 'Репозитории' && !cloning && Boolean(repo) && profile?.type === 'git';
+
   return <div className="shell">
     <div className="tabbar">
       <button className="brand" aria-label="Приложения" onClick={() => navigate('Приложения')} disabled={!!busy}>
@@ -396,8 +398,8 @@ function App() {
           active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
-    <main className={page === 'История Git' ? 'history-page' : undefined}>
-      {page !== 'История Git' && <header><h1>{page}</h1></header>}
+    <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
+      {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
       {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
       {message && <div role="status" className="notice success">{message}</div>}
@@ -459,10 +461,8 @@ function App() {
           <div className="actions wide"><button onClick={() => run('pickDirectory', undefined, 'Выбор каталога', value => { if (value) setRepoInput(value); })}>Выбрать папку</button></div>
           <label className="wide">HTTPS URL для клонирования<input value={remote} placeholder="https://devops.example.com/Collection/Project/_git/Repository" onChange={e => setRemote(e.target.value)}/></label>
         </div><div className="actions"><button disabled={!remote || !repoInput} onClick={() => run('clone', { url: remote, path: repoInput }, 'Клонирование', setOpened)}>Клонировать в указанный путь</button></div></section>}
-        {repo && <section className="panel"><h2>Рабочее дерево</h2>
-          <p className="hint" title={repo}>{repo}</p>
-          <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>
-          {profile?.type === 'git' ? <WorkingTree key={repo + '\0' + git.branch} files={git.files}
+        {repo && !cloning && <section className={fileWorkspace ? 'file-workspace-body' : 'panel'}>
+          {fileWorkspace ? <WorkingTree key={repo + '\0' + git.branch} files={git.files}
             refresh={() => run('status', repo, 'Обновление рабочего дерева', updateGit)}
             readPatch={(path, staged, complete) => run('workingPatch', { repo, path, staged }, 'Чтение изменений', complete)}
             stage={(path, staged, complete) => run('stageFile', { repo, path, staged }, staged ? 'Удаление из индекса' : 'Добавление в индекс', result => {
@@ -471,6 +471,9 @@ function App() {
             commit={(message, complete) => run('commitStaged', { repo, message }, 'Создание коммита', result => {
               updateGit(result); complete(); setMessage('Коммит создан.');
             })}/> : <>
+          <h2>Рабочее дерево</h2>
+          <p className="hint" title={repo}>{repo}</p>
+          <p className="hint">{git.branch || 'Detached HEAD'} · {git.head || 'Коммитов пока нет'}</p>
           <pre className="readout">{git.status || 'Рабочее дерево чистое.'}</pre>
           <div className="actions"><button onClick={() => run('diff', repo, 'Чтение Git diff', setGitDiff)}>Показать Git diff</button></div>
           {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
