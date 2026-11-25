@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { promisify } from 'node:util';
 import { Failure, Files } from './model';
 import { assetPath, inspectExport, maxBytes, safePath } from './snapshot';
-import type { GitCommit, GitCommitFile, WorkingFile } from './public';
+import type { BranchAction, GitCommit, GitCommitFile, WorkingFile } from './public';
 
 const run = promisify(execFile);
 const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
@@ -25,6 +25,8 @@ async function git(cwd: string, args: string[], diffExit = false) {
     if (e.code === 'ENOENT') reason = 'Установите Git и добавьте его в PATH.';
     else if (e.killed) reason = 'Истекло время ожидания или превышен лимит вывода. Проверьте состояние Git.';
     else if (/author identity unknown|unable to auto-detect email/i.test(diagnostic)) reason = 'Настройте user.name и user.email в Git.';
+    else if (/not fully merged/i.test(diagnostic)) reason = 'Ветка содержит несохранённые в других ветках коммиты. Сначала выполните слияние.';
+    else if (/would be overwritten/i.test(diagnostic)) reason = 'Git остановил переключение, чтобы сохранить локальные изменения.';
     else if (/non-fast-forward|fetch first/i.test(diagnostic)) reason = 'Удалённая ветка изменилась. Выполните fetch и согласуйте историю.';
     else if (/authentication|permission denied|credential/i.test(diagnostic)) reason = 'Проверьте доступ и Git Credential Manager.';
     throw new Failure('Git ' + args[0] + ': ' + reason, 'git');
@@ -233,6 +235,39 @@ export async function changeBranch(repo: string, branch: string, create: boolean
   if (branch.startsWith('-') || branch.startsWith('@{')) throw new Failure('Укажите имя локальной ветки.');
   await git(repo, ['check-ref-format', '--branch', branch]);
   await git(repo, create ? ['switch', '-c', branch] : ['switch', '--no-guess', '--', branch]);
+  return gitStatus(repo);
+}
+export async function branchAction(repo: string, input: BranchAction) {
+  const { ref, action } = input;
+  const state = await gitStatus(repo);
+  const local = state.localBranches.find(name => 'refs/heads/' + name === ref);
+  const remote = state.remoteBranches.find(name => 'refs/remotes/' + name === ref);
+  if (!local && !remote) throw new Failure('Ветка больше не доступна.', 'git');
+  if (action === 'create' || action === 'rename') {
+    if (!input.name || input.name.startsWith('-') || input.name.startsWith('@{')) throw new Failure('Укажите имя локальной ветки.');
+    await git(repo, ['check-ref-format', '--branch', input.name]);
+    if (action === 'create') await git(repo, ['switch', '-c', input.name, ...(state.head || remote ? [ref] : [])]);
+    else if (local) await git(repo, ['branch', '-m', '--', local, input.name]);
+    else throw new Failure('Переименование доступно для локальной ветки.');
+  } else if (action === 'delete') {
+    if (!local || local === state.branch) throw new Failure('Для удаления выберите другую локальную ветку.');
+    await git(repo, ['branch', '-d', '--', local]);
+  } else if (action === 'switch') {
+    if (local) {
+      if (local !== state.branch) await git(repo, ['switch', '--no-guess', '--', local]);
+    } else {
+      const name = (await command(repo, ['remote'])).split(/\r?\n/)
+        .filter(name => remote?.startsWith(name + '/')).sort((a, b) => b.length - a.length)[0];
+      if (!name || !remote) throw new Failure('Удалённый репозиторий ветки не настроен.');
+      const branch = remote.slice(name.length + 1);
+      if (!state.localBranches.includes(branch)) await git(repo, ['switch', '--track', '-c', branch, ref]);
+      else {
+        const upstream = await command(repo, ['rev-parse', '--symbolic-full-name', '--verify', branch + '@{upstream}']).catch(() => '');
+        if (upstream !== ref) throw new Failure('Одноимённая локальная ветка уже существует. Выберите её в списке локальных веток.');
+        if (branch !== state.branch) await git(repo, ['switch', '--no-guess', '--', branch]);
+      }
+    }
+  } else throw new Failure('Неизвестное действие с веткой.');
   return gitStatus(repo);
 }
 export async function fetchRemote(repo: string) {

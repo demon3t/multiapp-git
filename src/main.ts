@@ -213,6 +213,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   async init(path) { return openWorkspace(await git.initRepo(path)); },
   async clone(input) { return openWorkspace(await git.cloneRepo(input.url, input.path)); },
   status: git.gitStatus, diff: git.gitDiff, branch: input => git.changeBranch(input.repo, input.branch, input.create),
+  branchAction: input => git.branchAction(input.repo, input),
   workingPatch: input => git.workingPatch(input.repo, input.path, input.staged),
   stageFile: input => git.stageFile(input.repo, input.path, input.staged),
   commitStaged: input => git.commitStaged(input.repo, input.message),
@@ -314,7 +315,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
 const quiet = new Set(['profiles', 'history', 'pickDirectory', 'status', 'diff', 'workingPatch', 'gitLog', 'commitFiles', 'commitPatch', 'snapshotFolders', 'updateStatus', 'checkUpdate', 'updateChanges', 'installUpdate', 'openReleases']);
 const logMessages: Partial<Record<keyof Requests, string>> = {
   save: 'Профиль сохранён', probe: 'Проверка стенда выполнена', open: 'Репозиторий открыт', clone: 'Репозиторий клонирован',
-  branch: 'Ветка выбрана', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
+  branch: 'Ветка выбрана', branchAction: 'Операция с веткой', fetch: 'Fetch выполнен', pull: 'Pull выполнен', push: 'Push выполнен', inventory: 'Состав экспорта получен',
   exportPreview: 'Предпросмотр экспорта готов', write: 'Каталог снимка проверен и записан', commit: 'Коммит создан',
   validate: 'Локальная проверка пройдена', plan: 'План импорта подготовлен', apply: 'Импорт применён и проверен', verify: 'Проверка цели выполнена',
   saveUpdateSettings: 'Настройки обновлений сохранены'

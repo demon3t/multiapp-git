@@ -1,0 +1,85 @@
+import React, { useLayoutEffect, useRef, useState } from 'react';
+import type { BranchAction } from './core/public';
+
+export type BranchMenuTarget = { ref: string; anchor: HTMLButtonElement };
+export type BranchCommand = BranchAction['action'] | 'history';
+type EditAction = 'create' | 'rename' | 'delete';
+
+export function BranchMenu({ target, current, onClose, onCommand }: {
+  target: BranchMenuTarget; current: string; onClose: () => void; onCommand: (command: BranchCommand) => void;
+}) {
+  const menu = useRef<HTMLDivElement>(null);
+  const local = target.ref.startsWith('refs/heads/');
+  const name = target.ref.replace(/^refs\/(heads|remotes)\//, '');
+  useLayoutEffect(() => {
+    const box = menu.current!;
+    const anchor = target.anchor.getBoundingClientRect();
+    box.style.left = Math.max(4, Math.min(anchor.left, window.innerWidth - box.offsetWidth - 4)) + 'px';
+    box.style.top = Math.max(4, Math.min(anchor.bottom, window.innerHeight - box.offsetHeight - 4)) + 'px';
+    box.querySelector('button')?.focus();
+    function outside(event: PointerEvent) {
+      if (event.target instanceof Node && !box.contains(event.target) && !target.anchor.contains(event.target)) onClose();
+    }
+    window.addEventListener('pointerdown', outside);
+    window.addEventListener('resize', onClose);
+    return () => {
+      window.removeEventListener('pointerdown', outside);
+      window.removeEventListener('resize', onClose);
+      if (target.anchor.isConnected && box.contains(document.activeElement)) target.anchor.focus();
+    };
+  }, [target, onClose]);
+  const item = (command: BranchCommand, label: string, disabled = false) =>
+    <button type="button" role="menuitem" className="menu-command" disabled={disabled} onClick={() => onCommand(command)}>{label}</button>;
+  return <div ref={menu} role="menu" aria-label={name} className="repo-menu-panel branch-menu" onKeyDown={event => {
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      event.preventDefault(); event.stopPropagation(); onClose();
+    } else if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const buttons = [...event.currentTarget.querySelectorAll('button:not(:disabled)')] as HTMLButtonElement[];
+      const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1 :
+        (index + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    }
+  }}>
+    <div className="branch-menu-name" title={name}>{name}</div>
+    {item('history', 'Показать историю')}
+    {item('switch', 'Переключить ветку', local && name === current)}
+    {item('create', 'Создать ветку от этой')}
+    {local && <>
+      <div className="menu-separator" role="separator"/>
+      {item('rename', 'Переименовать…')}
+      {item('delete', 'Удалить…', name === current)}
+    </>}
+  </div>;
+}
+
+const titles = { create: 'Создать ветку', rename: 'Переименовать ветку', delete: 'Удалить ветку' };
+
+export function BranchDialog({ refName, action, onClose, onSubmit }: {
+  refName: string; action: EditAction; onClose: () => void; onSubmit: (action: BranchAction) => void;
+}) {
+  const dialog = useRef<HTMLDialogElement>(null);
+  const branch = refName.replace(/^refs\/(heads|remotes)\//, '');
+  const [name, setName] = useState(action === 'rename' ? branch : '');
+  useLayoutEffect(() => { dialog.current?.showModal(); }, []);
+  const deleting = action === 'delete';
+  return <dialog ref={dialog} className="update-dialog branch-dialog" aria-labelledby="branch-dialog-title"
+    onCancel={event => { event.preventDefault(); onClose(); }}>
+    <h2 id="branch-dialog-title">{titles[action]}</h2>
+    <form onSubmit={event => {
+      event.preventDefault();
+      if (deleting) onSubmit({ ref: refName, action });
+      else if (name.trim()) onSubmit({ ref: refName, action, name: name.trim() });
+    }}>
+      {deleting ? <p>Удалить локальную ветку <strong>{branch}</strong>?</p>
+        : <label>Имя ветки<input value={name} onChange={event => setName(event.target.value)} required autoFocus/></label>}
+      <div className="update-dialog-actions">
+        <button type="button" onClick={onClose} autoFocus={deleting}>Отмена</button>
+        <button className={deleting ? 'danger' : 'primary'} disabled={!deleting && (!name.trim() || action === 'rename' && name.trim() === branch)}>
+          {deleting ? 'Удалить' : action === 'create' ? 'Создать и переключить' : 'Переименовать'}
+        </button>
+      </div>
+    </form>
+  </dialog>;
+}

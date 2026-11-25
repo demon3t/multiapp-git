@@ -1,14 +1,25 @@
 import React from 'react';
 
 type RefNode = { ref?: string; children: Map<string, RefNode> };
-type RefActions = { active?: string; disabled: boolean; onSelect: (ref: string) => void };
+type RefActions = { active?: string; disabled: boolean; onSelect: (ref: string) => void;
+  onMenu?: (ref: string, anchor: HTMLButtonElement) => void; onSwitch?: (ref: string) => void };
 
 function BranchNodes({ nodes, ...actions }: RefActions & { nodes: Map<string, RefNode> }) {
   return <ul>{[...nodes].map(([name, node]) => {
     const ref = node.ref;
     return <li key={name}>
       {ref && <button type="button" className="branch-ref" aria-current={ref === actions.active ? 'true' : undefined}
-        disabled={actions.disabled} title={ref} onClick={() => actions.onSelect(ref)}>
+        disabled={actions.disabled} title={ref} aria-haspopup={actions.onMenu ? 'menu' : undefined}
+        onClick={event => {
+          if (actions.onMenu) actions.onMenu(ref, event.currentTarget);
+          else actions.onSelect(ref);
+        }}
+        onContextMenu={event => {
+          if (!actions.onMenu) return;
+          event.preventDefault();
+          actions.onMenu(ref, event.currentTarget);
+        }}
+        onDoubleClick={() => actions.onSwitch?.(ref)}>
         <span className="branch-dot" aria-hidden="true"/><span>{name}</span>
       </button>}
       {node.children.size > 0 && <details open>

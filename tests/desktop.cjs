@@ -199,6 +199,9 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll("button"), item => item.textContent)'),
     ['compact', 'main']);
   await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-menu button"), item => item.textContent)'),
+    ['Показать историю', 'Переключить ветку', 'Создать ветку от этой']);
+  await evaluate('document.querySelector(".branch-menu button").click()');
   const rowCount = 'document.querySelectorAll(".commit-row").length';
   for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 2; attempt++) await wait(100);
   assert.equal(await evaluate(rowCount), 2);
@@ -214,6 +217,44 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.match(await evaluate('document.querySelector(".commit-info")?.textContent'), /Родители/);
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
   assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
+
+  const branch = name => 'document.querySelector(' + JSON.stringify('.branch-ref[title="refs/heads/' + name + '"]') + ')';
+  const menuItem = label => 'Array.from(document.querySelectorAll(".branch-menu button")).find(button => button.textContent === ' + JSON.stringify(label) + ')';
+  const waitForBranch = async name => {
+    for (let attempt = 0; attempt < 30 && !(await evaluate(branch(name) + '?.getAttribute("aria-current") === "true" && !' + branch(name) + '?.disabled')); attempt++) await wait(100);
+    assert.equal(await evaluate(branch(name) + '?.getAttribute("aria-current")'), 'true');
+    assert.equal(git('branch', '--show-current').toString().trim(), name);
+  };
+  const submitBranchName = name => evaluate(`(() => {
+    const field = document.querySelector('.branch-dialog input');
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, ${JSON.stringify(name)});
+    field.dispatchEvent(new Event('input', { bubbles: true }));
+    field.form.requestSubmit();
+  })()`);
+  await evaluate(branch('main') + '.dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, cancelable: true}))');
+  assert.equal(await evaluate(menuItem('Удалить…') + '.disabled'), true);
+  if (process.env.MGIT_TEST_BRANCH_SCREENSHOT) {
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_BRANCH_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  await evaluate(menuItem('Создать ветку от этой') + '.click()');
+  await submitBranchName('test/context');
+  await waitForBranch('test/context');
+  await evaluate(branch('test/context') + '.click()');
+  await evaluate(menuItem('Переименовать…') + '.click()');
+  await submitBranchName('test/renamed');
+  await waitForBranch('test/renamed');
+  await evaluate(branch('feature/ui/compact') + '.dispatchEvent(new MouseEvent("dblclick", {bubbles: true}))');
+  await waitForBranch('feature/ui/compact');
+  assert.doesNotMatch(await readFile(join(repo, 'README.md'), 'utf8'), /Local snapshots/);
+  await evaluate(branch('main') + '.click()');
+  await evaluate(menuItem('Переключить ветку') + '.click()');
+  await waitForBranch('main');
+  await evaluate(branch('test/renamed') + '.click()');
+  await evaluate(menuItem('Удалить…') + '.click()');
+  await evaluate('document.querySelector(".branch-dialog button.danger").click()');
+  for (let attempt = 0; attempt < 30 && await evaluate('!!' + branch('test/renamed')); attempt++) await wait(100);
+  assert.equal(await evaluate('!!' + branch('test/renamed')), false);
 
   const localRepo = initialized.data.repo;
   const localGit = (...args) => execFileSync('git', args, { cwd: localRepo, encoding: 'utf8' });

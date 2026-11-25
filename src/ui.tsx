@@ -4,6 +4,8 @@ import type { AssetSummary, Bridge, Change, Entry, GitState, OpenedRepo, Plan, P
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
 import { BranchList } from './branch-list';
+import { BranchDialog, BranchMenu, type BranchCommand, type BranchMenuTarget } from './branch-menu';
+import type { BranchAction } from './core/public';
 import { GitHistory } from './git-history';
 import { WorkingTree } from './working-tree';
 import { RepositoryIcon, TabAppearanceDialog } from './tab-appearance';
@@ -99,6 +101,8 @@ function App() {
   const [repoMenu, setRepoMenu] = useState(false);
   const [appMenu, setAppMenu] = useState(false);
   const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
+  const [branchMenu, setBranchMenu] = useState<BranchMenuTarget>();
+  const [branchDialog, setBranchDialog] = useState<{ ref: string; action: 'create' | 'rename' | 'delete' }>();
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -229,6 +233,32 @@ function App() {
     if (value) { setRef(value); invalidate(); }
     navigate('История Git');
   }
+  function openBranchMenu(ref: string, anchor: HTMLButtonElement) {
+    setBranchMenu({ ref, anchor });
+  }
+  function changeSelectedBranch(action: BranchAction) {
+    setBranchMenu(undefined);
+    setBranchDialog(undefined);
+    if (busy) return;
+    void run('branchAction', { repo, ...action }, 'Операция с веткой', result => {
+      updateGit(result);
+      if (action.action === 'switch' || action.action === 'create') {
+        showGitHistory('refs/heads/' + result.branch);
+        setMessage('Текущая ветка: ' + result.branch);
+      } else {
+        if (historyRef === action.ref) showGitHistory(action.action === 'rename' ? 'refs/heads/' + action.name : undefined);
+        setMessage(action.action === 'rename' ? 'Ветка переименована.' : 'Ветка удалена.');
+      }
+    });
+  }
+  function chooseBranchCommand(command: BranchCommand) {
+    if (!branchMenu) return;
+    const { ref } = branchMenu;
+    setBranchMenu(undefined);
+    if (command === 'history') showGitHistory(ref);
+    else if (command === 'switch') changeSelectedBranch({ ref, action: 'switch' });
+    else setBranchDialog({ ref, action: command });
+  }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
     else setError({ message: 'На цели есть расхождения.', details: result.issues });
@@ -277,7 +307,7 @@ function App() {
         item.code === event.code && Boolean(item.ctrl) === event.ctrlKey && Boolean(item.shift) === event.shiftKey);
       if (!command) return;
       event.preventDefault();
-      if (event.repeat || busy || updateDialog || appearanceTab || command.disabled) return;
+      if (event.repeat || busy || updateDialog || appearanceTab || branchDialog || branchMenu || command.disabled) return;
       setRepoMenu(false);
       setAppMenu(false);
       command.run();
@@ -396,13 +426,18 @@ function App() {
             onClick={() => showGitHistory()}>Все коммиты</button>
         </div>
         <BranchList label="Локальные ветки" names={git.localBranches} prefix="refs/heads/"
-          expanded active={page === 'История Git' && historyRef ? historyRef : 'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}/>
+          expanded active={'refs/heads/' + git.branch} disabled={!!busy} onSelect={showGitHistory}
+          onMenu={openBranchMenu} onSwitch={ref => changeSelectedBranch({ ref, action: 'switch' })}/>
         <BranchList label="Удалённые ветки" names={git.remoteBranches} prefix="refs/remotes/"
-          active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>
+          disabled={!!busy} onSelect={showGitHistory} onMenu={openBranchMenu}
+          onSwitch={ref => changeSelectedBranch({ ref, action: 'switch' })}/>
         {git.tags.length > 0 && <BranchList label="Теги" names={git.tags} prefix="refs/tags/"
           active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
+    {branchMenu && <BranchMenu target={branchMenu} current={git.branch} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
+    {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action}
+      onClose={() => setBranchDialog(undefined)} onSubmit={changeSelectedBranch}/>}
     <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
       {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
       {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}

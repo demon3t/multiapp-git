@@ -286,3 +286,7 @@ button.danger,.danger{background:#c44d68;color:#fff}
 .commit-row[aria-pressed=true],
 .commit-files button[aria-pressed=true],
 .diff-files .active{font-weight:700}
+
+.branch-menu{position:fixed;right:auto;z-index:20;max-width:calc(100vw - 8px)}
+.branch-menu-name{padding:5px 8px;color:#536173;font-weight:650;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.branch-dialog form{margin-top:12px}
