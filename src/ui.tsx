@@ -73,7 +73,6 @@ function App() {
   const [remote, setRemote] = useState('');
   const [git, setGit] = useState(emptyGit);
   const [gitDiff, setGitDiff] = useState<{ staged: string; unstaged: string }>();
-  const [newBranch, setNewBranch] = useState('');
   const [folderInput, setFolderInput] = useState<string>();
   const [snapshotFolders, setSnapshotFolders] = useState<{ repo: string; ref: string; head: string; paths: string[] }>();
   const [ref, setRef] = useState('HEAD');
@@ -486,10 +485,6 @@ function App() {
           {gitDiff && <div className="diff-bodies"><details open><summary>Индекс</summary><pre>{gitDiff.staged || '—'}</pre></details>
             <details open><summary>Рабочее дерево</summary><pre>{gitDiff.unstaged || '—'}</pre></details></div>}
           </>}
-          <div className="actions"><input aria-label="Имя ветки" value={newBranch} onChange={e => setNewBranch(e.target.value)} list="branches" placeholder="Имя локальной ветки"/>
-            <datalist id="branches">{git.localBranches.map(branch => <option key={branch} value={branch}/>)}</datalist>
-            <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: false }, 'Переключение ветки', updateGit)}>Переключить</button>
-            <button disabled={!newBranch} onClick={() => run('branch', { repo, branch: newBranch, create: true }, 'Создание ветки', updateGit)}>Создать и переключить</button></div>
         </section>}
       </>}
       {page === 'Экспорт' && <>{contextPanel}<section className="panel">
