@@ -174,12 +174,12 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
         </> : <p className="working-diff-empty hint">Выберите файл для просмотра изменений.</p>}
       </section>
     </div>
-    <form className="actions" onSubmit={event => {
+    <form className="actions commit-actions" onSubmit={event => {
       event.preventDefault();
       if (readyToCommit) commit(message, () => { setMessage(''); setSelection(undefined); });
     }}>
-      <input aria-label="Сообщение коммита" placeholder="Сообщение коммита" value={message} onChange={event => setMessage(event.target.value)}/>
       <button className="primary" disabled={!readyToCommit}>Создать коммит</button>
+      <input aria-label="Сообщение коммита" placeholder="Сообщение коммита" value={message} onChange={event => setMessage(event.target.value)}/>
     </form>
   </div>;
 }
