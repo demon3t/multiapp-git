@@ -244,7 +244,9 @@ export async function branchAction(repo: string, input: BranchAction) {
   const local = state.localBranches.find(name => 'refs/heads/' + name === ref);
   const remote = state.remoteBranches.find(name => 'refs/remotes/' + name === ref);
   if (!local && !remote) throw new Failure('Ветка больше не доступна.', 'git');
-  if (action === 'tag') {
+  if (action === 'merge' || action === 'rebase') {
+    await integrateBranch(repo, input, state);
+  } else if (action === 'tag') {
     if (!input.name || input.name.startsWith('-')) throw new Failure('Укажите имя тега.');
     await git(repo, ['tag', '--', input.name, ref]);
   } else if (action === 'create' || action === 'rename') {
@@ -273,6 +275,35 @@ export async function branchAction(repo: string, input: BranchAction) {
     }
   } else throw new Failure('Неизвестное действие с веткой.');
   return gitStatus(repo);
+}
+async function integrateBranch(repo: string, input: Extract<BranchAction, { action: 'merge' | 'rebase' }>, state: Awaited<ReturnType<typeof gitStatus>>) {
+  const { action, ref } = input;
+  if (!state.branch || !state.head || state.branch !== input.current || state.head !== input.head) {
+    throw new Failure('Текущая ветка или её коммит изменились. Откройте меню ветки заново.', 'git');
+  }
+  if (ref === 'refs/heads/' + state.branch) throw new Failure('Выберите другую ветку.', 'git');
+  if (state.status) throw new Failure('Сохраните изменения в рабочем дереве перед слиянием или rebase.', 'dirty');
+  const markers = ['MERGE_HEAD', 'rebase-merge', 'rebase-apply', 'CHERRY_PICK_HEAD', 'REVERT_HEAD', 'sequencer'];
+  const paths = (await command(repo, ['rev-parse', ...markers.flatMap(marker => ['--git-path', marker])])).split(/\r?\n/);
+  async function exists(path: string) {
+    try { await fs.stat(resolve(repo, path)); return true; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+  if ((await Promise.all(paths.map(exists))).some(Boolean)) throw new Failure('Завершите текущую операцию Git перед продолжением.', 'git');
+  const target = await resolveCommit(repo, ref);
+  try {
+    await git(repo, action === 'merge' ? ['merge', '--no-edit', target] : ['rebase', '--no-autostash', '--no-update-refs', target]);
+  } catch (error) {
+    const operationPaths = action === 'merge' ? paths.slice(0, 1) : paths.slice(1, 3);
+    if (!(await Promise.all(operationPaths.map(exists))).some(Boolean)) throw error;
+    try { await git(repo, [action, '--abort']); }
+    catch { throw new Failure('Git не смог отменить операцию. Проверьте рабочее дерево и завершите или отмените операцию в Git.', 'git'); }
+    throw new Failure(action === 'merge' ? 'Слияние остановлено. Git восстановил исходное состояние.'
+      : 'Rebase остановлен. Git восстановил исходное состояние.', 'git');
+  }
 }
 export async function fetchRemote(repo: string) {
   await git(repo, ['fetch', '--all']);

@@ -4,7 +4,7 @@ import type { AssetSummary, Bridge, Change, Entry, GitState, OpenedRepo, Plan, P
 import './ui.css';
 import { UpdateDialog } from './update-dialog';
 import { BranchList } from './branch-list';
-import { BranchDialog, BranchMenu, type BranchCommand, type BranchMenuTarget } from './branch-menu';
+import { BranchDialog, BranchMenu, type BranchCommand, type BranchMenuTarget, type EditAction } from './branch-menu';
 import type { BranchAction } from './core/public';
 import { GitHistory } from './git-history';
 import { WorkingTree } from './working-tree';
@@ -102,7 +102,7 @@ function App() {
   const [appMenu, setAppMenu] = useState(false);
   const [appearanceTab, setAppearanceTab] = useState<ProfileSummary>();
   const [branchMenu, setBranchMenu] = useState<BranchMenuTarget>();
-  const [branchDialog, setBranchDialog] = useState<{ ref: string; action: 'create' | 'rename' | 'delete' | 'tag' }>();
+  const [branchDialog, setBranchDialog] = useState<{ ref: string; action: EditAction; current: string; head: string }>();
   const updateAvailable = Boolean(update?.latest && ['available', 'downloading', 'ready', 'installing'].includes(update.status));
   const profile = profiles.find(item => item.id === profileId);
   const folderRef = page === 'Импорт' ? ref : 'HEAD';
@@ -247,6 +247,9 @@ function App() {
         setMessage('Текущая ветка: ' + result.branch);
       } else if (action.action === 'tag') {
         setMessage('Тег создан.');
+      } else if (action.action === 'merge' || action.action === 'rebase') {
+        showGitHistory('refs/heads/' + result.branch);
+        setMessage(action.action === 'merge' ? 'Слияние выполнено.' : 'Rebase выполнен.');
       } else {
         if (historyRef === action.ref) showGitHistory(action.action === 'rename' ? 'refs/heads/' + action.name : undefined);
         setMessage(action.action === 'rename' ? 'Ветка переименована.' : 'Ветка удалена.');
@@ -260,7 +263,7 @@ function App() {
     if (command === 'history') showGitHistory(ref);
     else if (command === 'switch') changeSelectedBranch({ ref, action: 'switch' });
     else if (command === 'copy') void run('copyBranchName', { repo, ref }, 'Копирование имени ветки');
-    else setBranchDialog({ ref, action: command });
+    else setBranchDialog({ ref, action: command, current: git.branch, head: git.head });
   }
   function statusResult(result: { verified: boolean; checked: number; issues: unknown[] }) {
     if (result.verified) setMessage('На цели подтверждены UUID и связи. Проверено объектов: ' + result.checked + '.');
@@ -438,8 +441,8 @@ function App() {
           active={page === 'История Git' ? historyRef : undefined} disabled={!!busy} onSelect={showGitHistory}/>}
       </div>}
     </aside>
-    {branchMenu && <BranchMenu target={branchMenu} current={git.branch} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
-    {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action}
+    {branchMenu && <BranchMenu target={branchMenu} current={git.branch} head={git.head} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
+    {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action} current={branchDialog.current} head={branchDialog.head}
       onClose={() => setBranchDialog(undefined)} onSubmit={changeSelectedBranch}/>}
     <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
       {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}

@@ -12,6 +12,7 @@ export type GitState = {
 export type WorkingFile = { path: string; previousPath?: string; index: string; worktree: string };
 export type BranchAction = { ref: string } & (
   { action: 'switch' | 'delete' } | { action: 'create' | 'rename' | 'tag'; name: string }
+  | { action: 'merge' | 'rebase'; current: string; head: string }
 );
 export type GitCommit = { sha: string; parents: string[]; refs: string[]; author: string; date: string; subject: string };
 export type GitCommitFile = { status: string; path: string; previousPath?: string };

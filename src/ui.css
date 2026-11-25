@@ -292,5 +292,6 @@ button.danger,.danger{background:#c44d68;color:#fff}
 .branch-menu .menu-command{min-height:23px;padding:3px 7px;gap:12px;border-radius:4px;font-weight:400}
 .branch-menu .menu-command:focus-visible{background:#dce9f6;color:#1e5889;outline:none}
 .branch-menu .menu-command kbd{min-width:54px}
+.branch-menu .menu-command>span{overflow:hidden;text-overflow:ellipsis}
 .branch-menu .menu-separator{margin:2px -3px}
 .branch-dialog form{margin-top:12px}

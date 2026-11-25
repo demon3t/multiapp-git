@@ -200,7 +200,8 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     ['compact', 'main']);
   await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-menu button"), item => item.getAttribute("aria-label"))'),
-    ['Переключить ветку', 'Показать историю', 'Создать ветку от этой', 'Создать тег…', 'Копировать имя ветки']);
+    ['Переключить ветку', 'Показать историю', 'Слить в main…', 'Rebase main на выбранную…',
+      'Создать ветку от этой', 'Создать тег…', 'Копировать имя ветки']);
   await evaluate('document.querySelector(\'.branch-menu button[aria-label="Показать историю"]\').click()');
   const rowCount = 'document.querySelectorAll(".commit-row").length';
   for (let attempt = 0; attempt < 30 && await evaluate(rowCount) !== 2; attempt++) await wait(100);
@@ -233,10 +234,6 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   })()`);
   await evaluate(branch('main') + '.dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, cancelable: true}))');
   assert.equal(await evaluate(menuItem('Удалить…') + '.disabled'), true);
-  if (process.env.MGIT_TEST_BRANCH_SCREENSHOT) {
-    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
-    await writeFile(process.env.MGIT_TEST_BRANCH_SCREENSHOT, Buffer.from(data, 'base64'));
-  }
   await evaluate(menuItem('Создать ветку от этой') + '.click()');
   await submitBranchName('test/context');
   await waitForBranch('test/context');
@@ -255,6 +252,20 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   await evaluate(branch('main') + '.click()');
   await evaluate(menuItem('Переключить ветку') + '.click()');
   await waitForBranch('main');
+  await evaluate(branch('test/renamed') + '.click()');
+  if (process.env.MGIT_TEST_BRANCH_SCREENSHOT) {
+    const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+    await writeFile(process.env.MGIT_TEST_BRANCH_SCREENSHOT, Buffer.from(data, 'base64'));
+  }
+  const notice = 'document.querySelector("main .notice.success")?.textContent';
+  for (const [label, expected] of [['Слить в main…', 'Слияние выполнено.'], ['Rebase main на выбранную…', 'Rebase выполнен.']]) {
+    await evaluate(menuItem(label) + '.click()');
+    assert.equal(await evaluate('!!document.querySelector(".branch-dialog[open]")'), true);
+    await evaluate('document.querySelector(".branch-dialog form").requestSubmit()');
+    for (let attempt = 0; attempt < 30 && await evaluate(notice) !== expected; attempt++) await wait(100);
+    assert.equal(await evaluate(notice), expected);
+    if (label.startsWith('Слить')) await evaluate(branch('test/renamed') + '.click()');
+  }
   await evaluate(branch('test/renamed') + '.click()');
   await evaluate(menuItem('Удалить…') + '.click()');
   await evaluate('document.querySelector(".branch-dialog button.danger").click()');
