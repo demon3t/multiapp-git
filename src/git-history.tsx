@@ -67,7 +67,9 @@ export function GitHistory({ repo, ref, revision, onMenu }: {
           <span className="commit-title">{item.subject || 'Без сообщения'}</span>
         </span>
         <span className="commit-author" title={item.author}>{item.author}</span>
-        <span className="mono" title={item.sha}>{item.sha.slice(0, 8)}</span>
+        <span className="mono commit-sha-button" role="button" tabIndex={0} title="Скопировать полный SHA" aria-label={'Скопировать SHA ' + item.sha}
+          onClick={event => { event.stopPropagation(); void window.mgit.call('copyCommit', { repo, sha: item.sha, full: false }); }}
+          onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); void window.mgit.call('copyCommit', { repo, sha: item.sha, full: false }); } }}>{item.sha.slice(0, 8)}</span>
         <span className="commit-date">{formatDate(item.date)}</span>
       </button>)}
       {error && <p className="history-feedback" role="alert">{error}</p>}
