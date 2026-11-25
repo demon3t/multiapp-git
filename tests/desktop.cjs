@@ -257,13 +257,19 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
     await writeFile(process.env.MGIT_TEST_BRANCH_SCREENSHOT, Buffer.from(data, 'base64'));
   }
-  const notice = 'document.querySelector("main .notice.success")?.textContent';
+  const notice = 'document.querySelector(".operation-toasts .success [role=status]")?.textContent';
   for (const [label, expected] of [['Слить в main…', 'Слияние выполнено.'], ['Rebase main на выбранную…', 'Rebase выполнен.']]) {
     await evaluate(menuItem(label) + '.click()');
     assert.equal(await evaluate('!!document.querySelector(".branch-dialog[open]")'), true);
     await evaluate('document.querySelector(".branch-dialog form").requestSubmit()');
     for (let attempt = 0; attempt < 30 && await evaluate(notice) !== expected; attempt++) await wait(100);
     assert.equal(await evaluate(notice), expected);
+    if (label.startsWith('Rebase') && process.env.MGIT_TEST_TOAST_SCREENSHOT) {
+      const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
+      await writeFile(process.env.MGIT_TEST_TOAST_SCREENSHOT, Buffer.from(data, 'base64'));
+    }
+    await evaluate('document.querySelector(".operation-toasts .success button").click()');
+    assert.equal(await evaluate(notice), undefined);
     if (label.startsWith('Слить')) await evaluate(branch('test/renamed') + '.click()');
   }
   await evaluate(branch('test/renamed') + '.click()');

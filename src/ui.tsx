@@ -111,6 +111,12 @@ function App() {
   const context = { repo, folder, profileId };
   const applicationReady = Boolean(profile?.repo && profile.repo === repo);
 
+  useEffect(() => {
+    if (!message) return;
+    const timer = window.setTimeout(() => setMessage(''), 6000);
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
   async function run<K extends keyof Requests>(
     method: K, input: Requests[K][0], title: string, complete?: (result: Requests[K][1]) => void | Promise<void>
   ) {
@@ -444,11 +450,19 @@ function App() {
     {branchMenu && <BranchMenu target={branchMenu} current={git.branch} head={git.head} onClose={() => setBranchMenu(undefined)} onCommand={chooseBranchCommand}/>}
     {branchDialog && <BranchDialog refName={branchDialog.ref} action={branchDialog.action} current={branchDialog.current} head={branchDialog.head}
       onClose={() => setBranchDialog(undefined)} onSubmit={changeSelectedBranch}/>}
+    {(busy || error || message) && <div className="operation-toasts">
+      {busy && <div role="status" className="notice progress"><progress aria-label={busy}/>{busy}…</div>}
+      {error && <div className="error operation-toast-result">
+        <div role="alert"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>
+        <button type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setError(undefined)}>×</button>
+      </div>}
+      {message && <div className="notice success operation-toast-result">
+        <div role="status">{message}</div>
+        <button type="button" aria-label="Закрыть уведомление" title="Закрыть" onClick={() => setMessage('')}>×</button>
+      </div>}
+    </div>}
     <main className={page === 'История Git' ? 'history-page' : fileWorkspace ? 'file-workspace' : undefined}>
       {page !== 'История Git' && !fileWorkspace && <header><h1>{page}</h1></header>}
-      {busy && <div role="status" className="notice progress"><progress/>{busy}…</div>}
-      {error && <div role="alert" className="error"><strong>{error.message}</strong>{error.details != null && <pre>{JSON.stringify(error.details, null, 2)}</pre>}</div>}
-      {message && <div role="status" className="notice success">{message}</div>}
       <fieldset disabled={Boolean(busy)}>
       {page === 'История Git' && (repo ? <GitHistory key={repo + '\0' + (historyRef ?? '')} repo={repo} ref={historyRef} revision={git}/>
         : <p className="empty">Откройте репозиторий, чтобы увидеть историю Git.</p>)}
