@@ -308,7 +308,6 @@ function App() {
         return;
       }
       setUpdate(result.data);
-      if (result.data.latest && ['available', 'downloading', 'ready'].includes(result.data.status)) setUpdateDialog(true);
     }).catch(() => {
       setUpdate(previous => previous && { ...previous, status: 'error', message: 'Не удалось проверить обновления.' });
     });
@@ -410,7 +409,7 @@ function App() {
       <div className="title-drag"/>
       <div className="updates-menu">
         <button className={'updates-toggle update-icon-button' + (updateAvailable ? ' update-available' : '')}
-          aria-label="Проверить обновления" title="Проверить обновления (Ctrl+Shift+U)" aria-haspopup="dialog"
+          aria-label="Проверить обновления" title="Проверить обновления (Ctrl+Shift+U)"
           disabled={!!busy || update?.status === 'checking' || update?.status === 'installing'}
           onClick={checkForUpdates}>
           <span className="update-icon" aria-hidden="true">↻</span>

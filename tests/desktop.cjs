@@ -107,13 +107,23 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Проверить обновления');
   if (process.env.MGIT_TEST_UPDATE_SCREENSHOT) {
     await evaluate('document.querySelector(".update-icon-button").click()');
-    const notes = 'document.querySelectorAll(".update-dialog[open] li").length';
-    for (let attempt = 0; attempt < 160 && !(await evaluate(notes)); attempt++) await wait(100);
-    assert(await evaluate(notes), 'The update icon should open the dialog with release notes');
-    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".update-dialog-actions button"), button => button.textContent)'), ['Отмена', 'Обновить']);
-    assert.match(await evaluate('document.querySelector(".update-dialog .operation-toasts .update-toast [role=status]")?.textContent'), /Доступна версия mGit/);
+    const action = 'document.querySelector(".update-toast-action")';
+    for (let attempt = 0; attempt < 160 && !(await evaluate('!!' + action)); attempt++) await wait(100);
+    assert.equal(await evaluate(action + '?.textContent'), 'Открыть обновление');
+    assert.equal(await evaluate('!!document.querySelector(".update-dialog[open]")'), false);
+    assert.equal(await evaluate(`(() => {
+      const close = document.querySelector('.update-toast button[aria-label="Закрыть уведомление"]');
+      close.focus();
+      return getComputedStyle(close).outlineStyle;
+    })()`), 'none');
     const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
     await writeFile(process.env.MGIT_TEST_UPDATE_SCREENSHOT, Buffer.from(data, 'base64'));
+    await evaluate(action + '.click()');
+    const notes = 'document.querySelectorAll(".update-dialog[open] li").length';
+    for (let attempt = 0; attempt < 160 && !(await evaluate(notes)); attempt++) await wait(100);
+    assert(await evaluate(notes), 'The notification action should open the dialog with release notes');
+    assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".update-dialog-actions button"), button => button.textContent)'), ['Отмена', 'Обновить']);
+    assert.match(await evaluate('document.querySelector(".update-dialog .operation-toasts .update-toast [role=status]")?.textContent'), /Доступна версия mGit/);
     await evaluate('document.querySelector(".update-dialog-actions button").click()');
     assert.equal(await evaluate('!!document.querySelector(".update-dialog[open]")'), false);
     assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'available');
