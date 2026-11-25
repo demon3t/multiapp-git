@@ -252,9 +252,9 @@ main{background:#f6f8fb}
 .working-files>.actions{padding-top:7px}
 .working-files>.actions input{background:#fff;border-color:#cbd6e2}
 .working-files>.actions .primary{box-shadow:0 1px 2px #185a9828}
-.working-files>.commit-actions{display:flex;flex-wrap:nowrap}
-.working-files>.commit-actions .primary{order:0;flex:none}
-.working-files>.commit-actions input{order:1;flex:1;min-width:0;width:auto}
+.working-files>.commit-actions{display:grid;grid-template-columns:auto minmax(0,1fr)}
+.working-files>.commit-actions input:not([type=checkbox]){min-width:0;width:100%}
+.working-files>.commit-actions textarea{grid-column:1/-1;border-color:#cbd6e2}
 .statusbar{background:#e9eef4;border-top-color:#c8d2de;color:#506176}
 
 /* Borderless action controls */

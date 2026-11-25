@@ -223,7 +223,7 @@ const requests: { [K in keyof Requests]: (input: Requests[K][0]) => Requests[K][
   },
   workingPatch: input => git.workingPatch(input.repo, input.path, input.staged),
   stageFile: input => git.stageFile(input.repo, input.path, input.staged),
-  commitStaged: input => git.commitStaged(input.repo, input.message),
+  commitStaged: input => git.commitStaged(input.repo, input.message, input.description),
   gitLog: input => git.gitLog(input.repo, input.ref, input.offset),
   commitFiles: input => git.commitFiles(input.repo, input.sha),
   commitPatch: input => git.commitPatch(input.repo, input.sha, input.paths),

@@ -512,7 +512,7 @@ function App() {
             stage={(path, staged, complete) => run('stageFile', { repo, path, staged }, staged ? 'Удаление из индекса' : 'Добавление в индекс', result => {
               updateGit(result); complete();
             })}
-            commit={(message, complete) => run('commitStaged', { repo, message }, 'Создание коммита', result => {
+            commit={(message, description, complete) => run('commitStaged', { repo, message, description }, 'Создание коммита', result => {
               updateGit(result); complete(); setMessage('Коммит создан.');
             })}/> : <>
           <h2>Рабочее дерево</h2>

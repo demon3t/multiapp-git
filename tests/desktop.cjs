@@ -330,10 +330,16 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     const field = document.querySelector('.working-files input');
     Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(field, 'Add project notes');
     field.dispatchEvent(new Event('input', { bubbles: true }));
-    field.form.requestSubmit();
+    const description = field.form.querySelector('textarea');
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(description, 'Describe the changes.\\nAdd extra context.');
+    description.dispatchEvent(new Event('input', { bubbles: true }));
   })()`);
+  await capture(process.env.MGIT_TEST_COMMIT_DESCRIPTION_SCREENSHOT);
+  await evaluate('document.querySelector(".commit-actions").requestSubmit()');
   for (let attempt = 0; attempt < 30 && await evaluate(index) !== 0; attempt++) await wait(100);
   assert.equal(localGit('log', '-1', '--format=%s').trim(), 'Add project notes');
+  assert.equal(localGit('log', '-1', '--format=%b').trim(), 'Describe the changes.\nAdd extra context.');
+  assert.equal(await evaluate('document.querySelector(".commit-actions textarea").value'), '');
   assert.equal(localGit('ls-files').trim(), 'README.md');
   assert.equal(await readFile(join(localRepo, 'docs', 'drafts', 'notes [draft].txt'), 'utf8'), 'Keep this local\n');
   const plain = JSON.parse(await readFile(join(profile, 'mgit.json'), 'utf8')).profiles.find(item => item.type === 'git');

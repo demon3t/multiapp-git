@@ -40,7 +40,7 @@ export type Requests = {
   diff: [string, { staged: string; unstaged: string }];
   workingPatch: [{ repo: string; path: string; staged: boolean }, string];
   stageFile: [{ repo: string; path: string; staged: boolean }, GitState];
-  commitStaged: [{ repo: string; message: string }, GitState];
+  commitStaged: [{ repo: string; message: string; description?: string }, GitState];
   gitLog: [{ repo: string; ref?: string; offset: number }, { commits: GitCommit[]; more: boolean }];
   commitFiles: [{ repo: string; sha: string }, { message: string; files: GitCommitFile[] }];
   commitPatch: [{ repo: string; sha: string; paths: string[] }, string];

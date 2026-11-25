@@ -157,9 +157,10 @@ export async function stageFile(repo: string, path: string, staged: boolean) {
   return gitStatus(repo);
 }
 
-export async function commitStaged(repo: string, message: string) {
+export async function commitStaged(repo: string, message: string, description = '') {
   if (!message.trim() || message.length > 4000) throw new Failure('Введите сообщение коммита.');
-  await git(repo, ['commit', '-m', message.trim()]);
+  const body = description.trim();
+  await git(repo, ['commit', '-m', message.trim(), ...(body ? ['-m', body] : [])]);
   return gitStatus(repo);
 }
 export async function gitDiff(repo: string) {

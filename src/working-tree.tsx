@@ -7,7 +7,7 @@ type Props = {
   refresh: () => void;
   readPatch: (path: string, staged: boolean, complete: (patch: string) => void) => void;
   stage: (path: string, staged: boolean, complete: () => void) => void;
-  commit: (message: string, complete: () => void) => void;
+  commit: (message: string, description: string, complete: () => void) => void;
 };
 
 type Folder = { folders: Map<string, Folder>; files: WorkingFile[] };
@@ -129,6 +129,7 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
   const [selection, setSelection] = useState<{ path: string; staged: boolean; patch: string }>();
   const [split, setSplit] = useState(false);
   const [message, setMessage] = useState('');
+  const [description, setDescription] = useState('');
   const selected = files.find(file => file.path === selection?.path);
   const readyToCommit = files.some(inIndex) && Boolean(message.trim());
   function select(file: WorkingFile, staged = !inWorktree(file)) {
@@ -185,10 +186,16 @@ export function WorkingTree({ files, refresh, readPatch, stage, commit }: Props)
     </div>
     <form className="actions commit-actions" onSubmit={event => {
       event.preventDefault();
-      if (readyToCommit) commit(message, () => { setMessage(''); setSelection(undefined); });
+      if (readyToCommit) commit(message, description, () => {
+        setMessage('');
+        setDescription('');
+        setSelection(undefined);
+      });
     }}>
       <button className="primary" disabled={!readyToCommit}>Создать коммит</button>
       <input aria-label="Сообщение коммита" placeholder="Сообщение коммита" value={message} onChange={event => setMessage(event.target.value)}/>
+      <textarea aria-label="Описание коммита" placeholder="Описание коммита" rows={2} value={description}
+        onChange={event => setDescription(event.target.value)}/>
     </form>
   </div>;
 }
