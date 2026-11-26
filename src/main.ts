@@ -124,6 +124,7 @@ function listProfiles() {
 function profileFor(id: string) {
   const item = state.profiles.find(item => item.profile.id === id);
   if (!item || item.type === 'git') throw new Failure('Выберите профиль Superset.');
+  if (!item.profile.url) throw new Failure('Сначала укажите URL Superset в настройках приложения.', 'configuration');
   const secret = unlock(item);
   return { profile: item.profile, secret, adapter: new Superset(item.profile, secret) };
 }
@@ -147,15 +148,14 @@ async function save(input: ProfileInput) {
   }
   const old = existing?.type === 'git' ? undefined : existing;
   if (input.type !== 'superset' || !input.repo?.trim() || !['db', 'token'].includes(input.auth)) {
-    throw new Failure('Укажите тип приложения, папку Git и способ входа.');
+    throw new Failure('Укажите тип приложения и папку Git.');
   }
-  if (input.auth === 'db' && !input.username?.trim()) throw new Failure('Укажите пользователя Superset.');
   if (input.ca && (!input.ca.includes('-----BEGIN CERTIFICATE-----') || /PRIVATE KEY/.test(input.ca))) throw new Failure('Корпоративный CA должен быть сертификатом PEM.');
-  const url = profileUrl(input.url);
   const repo = await git.openRepoRoot(input.repo.trim());
-  const profile: StoredSuperset['profile'] = { id: existing?.profile.id ?? randomUUID(), name: input.name?.trim() || new URL(url).host, url,
+  const url = input.url?.trim() ? profileUrl(input.url) : '';
+  const profile: StoredSuperset['profile'] = { id: existing?.profile.id ?? randomUUID(), name: input.name?.trim() || (url ? new URL(url).host : basename(repo)), url,
     icon: existing?.profile.icon, color: existing?.profile.color,
-    auth: input.auth, username: input.auth === 'db' ? input.username?.trim() : undefined, ca: input.ca || undefined };
+    auth: input.auth, username: input.auth === 'db' ? input.username?.trim() || undefined : undefined, ca: input.ca || undefined };
   let secret: Secret = { credential: '', connections: {} };
   const sameTarget = old?.profile.url === profile.url;
   if (old && sameTarget) {
@@ -163,7 +163,8 @@ async function save(input: ProfileInput) {
     if (old.profile.auth !== input.auth || old.profile.username !== profile.username) secret.credential = '';
   }
   if (input.credential) secret.credential = input.credential;
-  if (!secret.credential || /[\r\n\0]/.test(secret.credential)) throw new Failure('Укажите пароль или токен для выбранного стенда.');
+  if (secret.credential && /[\r\n\0]/.test(secret.credential)) throw new Failure('Пароль или токен содержит недопустимые символы.');
+  if (profile.url && input.auth === 'db' && !profile.username) throw new Failure('Укажите пользователя Superset или оставьте URL пустым.');
   if (input.clearMappings) secret.connections = {};
   if (input.mappings?.trim()) {
     for (const line of input.mappings.trim().split(/\r?\n/)) {

@@ -571,18 +571,18 @@ function App() {
             <option value="">Добавить приложение</option>{profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</div>
         <form onSubmit={saveProfile}>
           <div className="form-grid">
-            <label>Тип приложения<select value={editor.type} required disabled={Boolean(editor.id)} onChange={e => setEditor({ ...editor, type: e.target.value })}>
+            <label>Тип приложения<select value={editor.type} required onChange={e => setEditor({ ...editor, type: e.target.value, url: e.target.value === 'git' ? '' : editor.url, auth: e.target.value === 'git' ? 'db' : editor.auth })}>
               <option value="">Выберите тип</option><option value="git">Git-репозиторий</option><option value="superset">Apache Superset</option></select></label>
             <label>Папка Git<div className="path-input"><input value={editor.repo} required onChange={e => setEditor({ ...editor, repo: e.target.value })}/>
               <button type="button" onClick={() => run('pickDirectory', undefined, 'Выбор папки Git', value => { if (value) setEditor({ ...editor, repo: value }); })}>Выбрать</button></div></label>
             {editor.type === 'git' && <label className="wide">Название вкладки<input value={editor.name}
               placeholder="Имя папки" onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>}
             {editor.type === 'superset' && <>
-            <label className="wide">URL Superset<input placeholder="https://superset.example.com" value={editor.url} required onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
+            <label className="wide">URL Superset<input placeholder="Можно указать позже" value={editor.url} onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
             <label>Авторизация<select value={editor.auth} onChange={e => setEditor({ ...editor, auth: e.target.value as ProfileInput['auth'], credential: '' })}>
               <option value="db">Пользователь и пароль</option><option value="token">Токен доступа</option></select></label>
-            {editor.auth === 'db' && <label>Пользователь<input value={editor.username ?? ''} required onChange={e => setEditor({ ...editor, username: e.target.value })}/></label>}
-            <label>{editor.auth === 'db' ? 'Пароль' : 'Токен доступа'}<input autoComplete="new-password" type="password" required={!editor.id} value={editor.credential || ''} placeholder={editor.id ? 'Введите для замены' : ''}
+            {editor.auth === 'db' && <label>Пользователь<input value={editor.username ?? ''} onChange={e => setEditor({ ...editor, username: e.target.value })}/></label>}
+            <label>{editor.auth === 'db' ? 'Пароль' : 'Токен доступа'}<input autoComplete="new-password" type="password" value={editor.credential || ''} placeholder="Можно указать позже"
               onChange={e => setEditor({ ...editor, credential: e.target.value })}/></label>
             </>}
           </div>
