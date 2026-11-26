@@ -100,10 +100,8 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.equal(await evaluate('!!document.querySelector("#update-permission")'), false);
   await evaluate('document.querySelector(".app-menu button").click()');
   await evaluate('document.querySelector(".app-menu-panel button:last-child").click()');
-  assert.match(await evaluate('document.querySelector(".updates-panel")?.textContent'), /Проверить сейчас/);
+  assert.match(await evaluate('document.querySelector("#system-settings-panel")?.textContent'), /Проверить сейчас/);
   assert.equal((await evaluate('window.mgit.call("updateStatus")')).data.status, 'idle');
-  await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }))');
-  assert.equal(await evaluate('!!document.querySelector(".updates-panel")'), false);
   assert.equal(await evaluate('document.querySelector(".update-icon-button")?.getAttribute("aria-label")'), 'Проверить обновления');
   if (process.env.MGIT_TEST_UPDATE_SCREENSHOT) {
     await evaluate('document.querySelector(".update-icon-button").click()');
@@ -144,16 +142,14 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   assert.equal(await shortcut('KeyO', true), false);
   assert.equal(await evaluate('document.querySelector("main .panel h2")?.textContent'), 'Клонировать репозиторий');
   assert.equal(await evaluate('!!document.querySelector(".repo-menu-panel")'), false);
-  await evaluate('Array.from(document.querySelectorAll(".repo-menu-trigger")).find(button => button.textContent.includes("Приложение")).click()');
+  assert.equal(await evaluate('document.querySelector(".app-menu > button").textContent'), 'Настройки');
+  await evaluate('document.querySelector(".app-menu > button").click()');
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".app-menu-panel button"), item => [item.firstChild.textContent, item.querySelector("kbd")?.textContent ?? ""])'),
-    [['История операций', 'Ctrl+H'], ['Настройки', 'Ctrl+,'], ['Настройки обновлений', '']]);
-  assert.equal(await evaluate('document.querySelector(".app-menu-panel [role=separator]")?.className'), 'menu-separator');
-  await evaluate('document.querySelector(".app-menu-panel button:first-child").click()');
-  assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'История операций');
-  for (let attempt = 0; attempt < 30 && await evaluate('document.querySelector(".app-menu button").disabled'); attempt++) await wait(100);
-  await evaluate('document.querySelector(".app-menu button").click()');
+    [['Система', 'Ctrl+,']]);
   assert.equal(await shortcut('Comma'), false);
-  assert.equal(await evaluate('document.querySelector("h1")?.textContent'), 'Настройки');
+  assert.equal(await evaluate('document.querySelector("main [role=tab][aria-selected=true]").textContent'), 'Система');
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("main [role=tabpanel] > label"), label => [label.textContent, label.control.disabled])'),
+    [['Язык', true], ['Тема', true]]);
   await evaluate('document.querySelector(".brand").click()');
   const initialized = await evaluate('window.mgit.call("init", ' + JSON.stringify(join(profile, 'initialized')) + ')');
   assert.equal(initialized.ok, true, JSON.stringify(initialized));
@@ -171,7 +167,14 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     field.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("form label"), x => x.firstChild.textContent)'),
-    ['Тип приложения', 'Папка Git', 'URL Superset', 'Авторизация', 'Пользователь', 'Пароль']);
+    ['Тип приложения', 'Папка Git', 'URL', 'Тип подключения']);
+  await evaluate(`(() => {
+    const field = document.querySelectorAll('form select')[1];
+    field.value = 'db';
+    field.dispatchEvent(new Event('change', { bubbles: true }));
+  })()`);
+  assert.deepEqual(await evaluate('Array.from(document.querySelectorAll("form label"), x => x.firstChild.textContent)'),
+    ['Тип приложения', 'Папка Git', 'URL', 'Тип подключения', 'Логин', 'Пароль']);
   const input = { name: '', type: 'superset', repo, url: 'http://127.0.0.1:18088', auth: 'db',
     username: 'desktop', credential: 'assert-dpapi-credential', mappings: 'c1000000-0000-4000-8000-000000000001 postgresql://desktop:assert-dpapi-uri@local/test' };
   for (const invalid of [{ ...input, repo: '' }, { ...input, type: '' }, { ...input, repo: profile }]) {
@@ -185,7 +188,7 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
       field.dispatchEvent(new Event('input', { bubbles: true }));
     });
   })()`);
-  await evaluate('document.querySelector("form").requestSubmit()');
+  await evaluate('document.querySelector("button[form=repository-profile-form]").click()');
   const selectedTab = 'document.querySelector(".app-tabs button[aria-pressed=true]")?.textContent';
   for (let attempt = 0; attempt < 30 && await evaluate(selectedTab) !== '127.0.0.1:18088'; attempt++) await wait(100);
   assert.equal(await evaluate(selectedTab), '127.0.0.1:18088');
@@ -215,7 +218,16 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     ['origin', 'feature', 'ui']);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-group")[1].querySelectorAll("button"), item => item.textContent)'),
     ['compact', 'main']);
-  await evaluate('document.querySelectorAll(".branch-group")[1].querySelector("button").click()');
+  const remoteBranch = 'document.querySelector(\'.branch-ref[title="refs/remotes/origin/feature/ui/compact"]\')';
+  await evaluate(remoteBranch + '.click()');
+  const remoteTipSelected = '!!document.querySelector(\'.commit-row[aria-pressed=true] [title="refs/remotes/origin/feature/ui/compact"]\')';
+  for (let attempt = 0; attempt < 30 && !(await evaluate(remoteTipSelected)); attempt++) await wait(100);
+  assert.equal(await evaluate(remoteTipSelected), true);
+  assert.equal(await evaluate('document.querySelector("main h1").textContent'), 'Все коммиты');
+  assert.equal(await evaluate('!!document.querySelector(".branch-menu")'), false);
+  assert.equal(git('branch', '--show-current').toString().trim(), 'main');
+  const rightClick = '.dispatchEvent(new MouseEvent("contextmenu", {bubbles: true, cancelable: true, button: 2}))';
+  await evaluate(remoteBranch + rightClick);
   assert.deepEqual(await evaluate('Array.from(document.querySelectorAll(".branch-menu button"), item => item.getAttribute("aria-label"))'),
     ['Переключить ветку', 'Показать историю', 'Слить в main…', 'Rebase main на выбранную…',
       'Создать ветку от этой', 'Создать тег…', 'Копировать имя ветки']);
@@ -244,7 +256,7 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   }
   await evaluate('document.querySelector(".branch-menu").dispatchEvent(new KeyboardEvent("keydown", {key: "Escape", bubbles: true}))');
   await evaluate('document.querySelector(".operation[aria-label=Import]").click()');
-  assert.equal(await evaluate('document.querySelector("input[list=refs]").value'), 'refs/remotes/origin/feature/ui/compact');
+  assert.equal(await evaluate('document.querySelector("main h1").textContent'), 'Импорт');
 
   const branch = name => 'document.querySelector(' + JSON.stringify('.branch-ref[title="refs/heads/' + name + '"]') + ')';
   const menuItem = label => 'Array.from(document.querySelectorAll(".branch-menu button")).find(button => button.getAttribute("aria-label") === ' + JSON.stringify(label) + ')';
@@ -264,11 +276,11 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   await evaluate(menuItem('Создать ветку от этой') + '.click()');
   await submitBranchName('test/context');
   await waitForBranch('test/context');
-  await evaluate(branch('test/context') + '.click()');
+  await evaluate(branch('test/context') + rightClick);
   await evaluate(menuItem('Переименовать…') + '.click()');
   await submitBranchName('test/renamed');
   await waitForBranch('test/renamed');
-  await evaluate(branch('test/renamed') + '.click()');
+  await evaluate(branch('test/renamed') + rightClick);
   await evaluate(menuItem('Создать тег…') + '.click()');
   await submitBranchName('test-context-tag');
   for (let attempt = 0; attempt < 30 && !(await evaluate('document.querySelector(\'.branch-ref[title="refs/tags/test-context-tag"]\')')); attempt++) await wait(100);
@@ -276,10 +288,10 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
   await evaluate(branch('feature/ui/compact') + '.dispatchEvent(new MouseEvent("dblclick", {bubbles: true}))');
   await waitForBranch('feature/ui/compact');
   assert.doesNotMatch(await readFile(join(repo, 'README.md'), 'utf8'), /Local snapshots/);
-  await evaluate(branch('main') + '.click()');
+  await evaluate(branch('main') + rightClick);
   await evaluate(menuItem('Переключить ветку') + '.click()');
   await waitForBranch('main');
-  await evaluate(branch('test/renamed') + '.click()');
+  await evaluate(branch('test/renamed') + rightClick);
   if (process.env.MGIT_TEST_BRANCH_SCREENSHOT) {
     const { data } = await devtools('Page.captureScreenshot', { format: 'png' });
     await writeFile(process.env.MGIT_TEST_BRANCH_SCREENSHOT, Buffer.from(data, 'base64'));
@@ -297,9 +309,9 @@ test('packaged mGit opens Superset and plain Git repositories', { timeout: 60_00
     }
     await evaluate('document.querySelector(".operation-toasts .success button").click()');
     assert.equal(await evaluate(notice), undefined);
-    if (label.startsWith('Слить')) await evaluate(branch('test/renamed') + '.click()');
+    if (label.startsWith('Слить')) await evaluate(branch('test/renamed') + rightClick);
   }
-  await evaluate(branch('test/renamed') + '.click()');
+  await evaluate(branch('test/renamed') + rightClick);
   await evaluate(menuItem('Удалить…') + '.click()');
   await evaluate('document.querySelector(".branch-dialog button.danger").click()');
   for (let attempt = 0; attempt < 30 && await evaluate('!!' + branch('test/renamed')); attempt++) await wait(100);

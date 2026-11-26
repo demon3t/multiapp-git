@@ -7,8 +7,8 @@ const dateFormat = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeSt
 const refName = (ref: string) => ref.replace(/^(?:HEAD -> |tag: )?refs\/(?:heads|remotes|tags)\//, '');
 const formatDate = (date: string) => date ? dateFormat.format(new Date(date)) : '—';
 
-export function GitHistory({ repo, ref, revision, onMenu }: {
-  repo: string; ref?: string; revision: GitState; onMenu: (target: CommitMenuTarget) => void;
+export function GitHistory({ repo, ref, revision, focus, onMenu }: {
+  repo: string; ref?: string; revision: GitState; focus?: { ref: string }; onMenu: (target: CommitMenuTarget) => void;
 }) {
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [selected, setSelected] = useState('');
@@ -16,8 +16,13 @@ export function GitHistory({ repo, ref, revision, onMenu }: {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const request = useRef(0);
+  const loadedRevision = useRef<GitState>(undefined);
+  const handledFocus = useRef<typeof focus>(undefined);
+  const focusedRow = useRef<HTMLButtonElement>(null);
   const graph = useMemo(() => layoutGraph(commits), [commits]);
   const commit = commits.find(item => item.sha === selected) ?? commits[0];
+  const branchTip = focus && commits.find(item => item.refs.some(name =>
+    name === focus.ref || name === 'HEAD -> ' + focus.ref));
 
   async function load(offset: number) {
     const id = ++request.current;
@@ -27,6 +32,7 @@ export function GitHistory({ repo, ref, revision, onMenu }: {
       const result = await window.mgit.call('gitLog', { repo, ref, offset });
       if (id !== request.current) return;
       if (result.ok) {
+        loadedRevision.current = revision;
         setCommits(previous => offset ? [...previous, ...result.data.commits] : result.data.commits);
         setMore(result.data.more);
       } else setError(result.message);
@@ -42,6 +48,17 @@ export function GitHistory({ repo, ref, revision, onMenu }: {
     return () => { request.current++; };
   }, [repo, ref, revision]);
 
+  useEffect(() => {
+    if (!focus || loading || loadedRevision.current !== revision || handledFocus.current === focus) return;
+    if (branchTip) {
+      handledFocus.current = focus;
+      setSelected(branchTip.sha);
+      focusedRow.current?.scrollIntoView({ block: 'nearest' });
+    } else if (!error && more) {
+      void load(commits.length);
+    }
+  }, [focus, branchTip, loading, error, more, commits.length, revision]);
+
   return <div className="git-history">
     <div className="git-history-heading"><h1>{ref ? refName(ref) : 'Все коммиты'}</h1></div>
     <div className="commit-list" aria-label="Граф истории Git">
@@ -49,7 +66,8 @@ export function GitHistory({ repo, ref, revision, onMenu }: {
         <span style={{ width: graph.width }}>Граф</span><span>Сообщение</span><span>Автор</span><span>SHA</span><span>Дата</span>
       </div>
       {commits.map((item, index) => <button type="button" className="commit-row commit-grid" aria-pressed={item.sha === commit?.sha}
-        key={item.sha} style={{ minWidth: graph.width + 470 }} aria-haspopup="menu" onClick={() => setSelected(item.sha)}
+        key={item.sha} ref={item === branchTip ? focusedRow : undefined}
+        style={{ minWidth: graph.width + 470 }} aria-haspopup="menu" onClick={() => setSelected(item.sha)}
         onContextMenu={event => {
           event.preventDefault();
           setSelected(item.sha);
