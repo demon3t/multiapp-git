@@ -125,6 +125,7 @@ function profileFor(id: string) {
   const item = state.profiles.find(item => item.profile.id === id);
   if (!item || item.type === 'git') throw new Failure('Выберите профиль Superset.');
   if (!item.profile.url) throw new Failure('Сначала укажите URL Superset в настройках приложения.', 'configuration');
+  if (item.profile.auth === 'db' && !item.profile.username) throw new Failure('Сначала укажите логин Superset в настройках приложения.', 'configuration');
   const secret = unlock(item);
   return { profile: item.profile, secret, adapter: new Superset(item.profile, secret) };
 }
@@ -164,7 +165,6 @@ async function save(input: ProfileInput) {
   }
   if (input.credential) secret.credential = input.credential;
   if (secret.credential && /[\r\n\0]/.test(secret.credential)) throw new Failure('Пароль или токен содержит недопустимые символы.');
-  if (profile.url && input.auth === 'db' && !profile.username) throw new Failure('Укажите пользователя Superset или оставьте URL пустым.');
   if (input.clearMappings) secret.connections = {};
   if (input.mappings?.trim()) {
     for (const line of input.mappings.trim().split(/\r?\n/)) {

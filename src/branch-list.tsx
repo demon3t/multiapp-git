@@ -11,16 +11,13 @@ function BranchNodes({ nodes, ...actions }: RefActions & { nodes: Map<string, Re
     return <li key={name}>
       {ref && <button type="button" className="branch-ref" aria-current={ref === actions.active ? 'true' : undefined}
         disabled={actions.disabled} title={ref} aria-haspopup={actions.onMenu ? 'menu' : undefined}
-        onClick={event => {
-          if (actions.onMenu) actions.onMenu(ref, event.currentTarget);
-          else actions.onSelect(ref);
-        }}
+        onClick={event => { if (event.detail < 2) actions.onSelect(ref); }}
         onContextMenu={event => {
           if (!actions.onMenu) return;
           event.preventDefault();
           actions.onMenu(ref, event.currentTarget);
         }}
-        onDoubleClick={() => actions.onSwitch?.(ref)}>
+        onDoubleClick={event => { if (event.button === 0) actions.onSwitch?.(ref); }}>
         {ref.startsWith('refs/tags/') ? <span className="branch-dot" aria-hidden="true"/> : <RepositoryIcon icon="branch"/>}
         <span>{name}</span>
       </button>}
