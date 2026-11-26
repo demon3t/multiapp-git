@@ -570,21 +570,21 @@ function App() {
           {profiles.length > 0 && <select aria-label="Редактируемое приложение" value={editor.id || ''} onChange={e => setEditor(profiles.find(item => item.id === e.target.value) ?? { ...emptyProfile })}>
             <option value="">Добавить приложение</option>{profiles.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select>}</div>
         <form onSubmit={saveProfile}>
-          <div className="form-grid">
+          <div className="form-grid repository-form">
             <label>Тип приложения<select value={editor.type} required onChange={e => setEditor({ ...editor, type: e.target.value, url: e.target.value === 'git' ? '' : editor.url, auth: e.target.value === 'git' ? 'db' : editor.auth })}>
               <option value="">Выберите тип</option><option value="git">Git-репозиторий</option><option value="superset">Apache Superset</option></select></label>
             <label>Папка Git<div className="path-input"><input value={editor.repo} required onChange={e => setEditor({ ...editor, repo: e.target.value })}/>
               <button type="button" onClick={() => run('pickDirectory', undefined, 'Выбор папки Git', value => { if (value) setEditor({ ...editor, repo: value }); })}>Выбрать</button></div></label>
-            {editor.type === 'git' && <label className="wide">Название вкладки<input value={editor.name}
-              placeholder="Имя папки" onChange={e => setEditor({ ...editor, name: e.target.value })}/></label>}
-            {editor.type === 'superset' && <>
-            <label className="wide">URL Superset<input placeholder="Можно указать позже" value={editor.url} onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
-            <label>Авторизация<select value={editor.auth} onChange={e => setEditor({ ...editor, auth: e.target.value as ProfileInput['auth'], credential: '' })}>
-              <option value="db">Пользователь и пароль</option><option value="token">Токен доступа</option></select></label>
-            {editor.auth === 'db' && <label>Пользователь<input value={editor.username ?? ''} onChange={e => setEditor({ ...editor, username: e.target.value })}/></label>}
-            <label>{editor.auth === 'db' ? 'Пароль' : 'Токен доступа'}<input autoComplete="new-password" type="password" value={editor.credential || ''} placeholder="Можно указать позже"
+            {editor.type === 'superset' && <div className="superset-fields">
+            <label>URL<input placeholder="Можно указать позже" value={editor.url} onChange={e => setEditor({ ...editor, url: e.target.value })}/></label>
+            <label>Тип подключения<select value={editor.auth} onChange={e => setEditor({ ...editor, auth: e.target.value as ProfileInput['auth'], credential: '' })}>
+              <option value="db">Логин и пароль</option><option value="token">Токен</option></select></label>
+            <label>Токен<input autoComplete="new-password" type="password" value={editor.auth === 'token' ? editor.credential || '' : ''} placeholder="Можно указать позже" disabled={editor.auth !== 'token'}
               onChange={e => setEditor({ ...editor, credential: e.target.value })}/></label>
-            </>}
+            <label>Логин<input value={editor.username ?? ''} onChange={e => setEditor({ ...editor, username: e.target.value })} disabled={editor.auth !== 'db'}/></label>
+            <label>Пароль<input autoComplete="new-password" type="password" value={editor.auth === 'db' ? editor.credential || '' : ''} placeholder="Можно указать позже" disabled={editor.auth !== 'db'}
+              onChange={e => setEditor({ ...editor, credential: e.target.value })}/></label>
+            </div>}
           </div>
           {editor.id && editor.type === 'superset' && <details className="advanced"><summary>Дополнительные параметры Superset</summary>
           <div className="form-grid">
@@ -596,7 +596,7 @@ function App() {
           {editor.id && <p className="hint">Настроено UUID: {profiles.find(item => item.id === editor.id)?.mappingIds.join(', ') || '—'}</p>}
           {editor.id && <label className="check"><input type="checkbox" checked={!!editor.clearMappings} onChange={e => setEditor({ ...editor, clearMappings: e.target.checked })}/>Очистить ранее сохранённые подключения</label>}
           </details>}
-          <div className="actions"><button className="primary" type="submit">Сохранить приложение</button></div>
+          <div className="actions form-submit"><button className="primary" type="submit">{editor.id ? 'Сохранить' : 'Создать'}</button></div>
         </form>
       </section>}
       {page === 'Репозитории' && <>
